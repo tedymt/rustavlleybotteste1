@@ -1,4 +1,6 @@
-"""Tradução automática para tickets multilíngues."""
+"""Tradução automática para tickets multilíngues.
+Idioma do ticket é FIXO (escolhido na abertura) — sem detecção automática.
+"""
 from deep_translator import GoogleTranslator
 
 try:
@@ -8,16 +10,30 @@ try:
 except ImportError:
     _HAS_LANGDETECT = False
 
-# Mapeamento de idiomas suportados
-LANG_MAP = {
-    "pt": "pt",
-    "en": "en",
-    "es": "es",
-    "fr": "fr",
-    "de": "de",
-    "it": "it",
-    "ja": "ja",
-}
+# Idioma do jogador (escolhido obrigatoriamente na abertura). value=único, (code_google, emoji, label)
+# Google Translator: en, es, fr, de, it, pt, ru
+TICKET_LANGUAGES = [
+    ("en", "🇺🇸", "English (US)"),
+    ("en-GB", "🇬🇧", "English (UK)"),
+    ("es", "🇪🇸", "Spanish"),
+    ("fr", "🇫🇷", "French"),
+    ("de", "🇩🇪", "German"),
+    ("it", "🇮🇹", "Italian"),
+    ("pt-PT", "🇵🇹", "Portuguese (PT)"),
+    ("pt", "🇧🇷", "Portuguese (BR)"),
+    ("ru", "🇷🇺", "Russian"),
+]
+
+
+def lang_to_google_code(lang: str) -> str:
+    """Mapeia author_lang para código do Google Translator."""
+    m = {"en-GB": "en", "pt-PT": "pt"}
+    return m.get(lang, lang)
+
+
+def get_lang_options_for_select() -> list[tuple[str, str, str]]:
+    """Retorna (value, emoji, label) para Select. value único para cada opção."""
+    return list(TICKET_LANGUAGES)
 
 
 def translate_text(text: str, target: str = "en", source: str = "auto") -> str:

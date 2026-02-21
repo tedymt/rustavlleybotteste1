@@ -158,6 +158,19 @@ def update_ticket(channel_id: str, updates: dict) -> None:
                 return
 
 
+def append_ticket_translation(channel_id: str, msg_id: int, content: str, translated: str, author_id: str, is_player: bool) -> None:
+    """Adiciona tradução ao ticket (para painel staff e botões sob demanda)."""
+    ticket = get_ticket_by_channel(channel_id)
+    if not ticket:
+        return
+    trans = dict(ticket.get("message_translations") or {})
+    trans[str(msg_id)] = {"content": content[:2000], "translated": translated[:2000], "author_id": str(author_id), "is_player": is_player}
+    if len(trans) > 100:
+        keys = sorted(trans.keys(), key=int)[-100:]
+        trans = {k: trans[k] for k in keys}
+    update_ticket(channel_id, {"message_translations": trans, "last_translated_message_id": msg_id})
+
+
 def save_transcript(ticket: dict, messages: list[dict]) -> str:
     """Salva transcript em JSON em transcripts/. Retorna o caminho do arquivo."""
     transcript_dir = _transcripts_path()

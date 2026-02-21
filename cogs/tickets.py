@@ -27,6 +27,7 @@ from utils.storage import (
     get_ticket_by_channel,
     add_ticket,
     update_ticket,
+    append_ticket_translation,
     save_transcript,
     remove_transcript_file,
     remove_closed_ticket_from_storage,
@@ -34,7 +35,13 @@ from utils.storage import (
 from utils.transcript_html import build_transcript_html
 from utils.panel_cache import get_last_panel_message_id, set_last_panel_message_id
 from utils.limits import MAX_ALLOWED_SUP_USERS, MAX_SERVERS, MAX_TRANSCRIPT_MESSAGES
-from utils.translator import translate_to_both, translate_text, detect_language, translate_for_ticket
+from utils.translator import (
+    translate_to_both,
+    translate_text,
+    translate_for_ticket,
+    get_lang_options_for_select,
+    lang_to_google_code,
+)
 
 
 def generate_ticket_code() -> str:
@@ -139,24 +146,24 @@ class TicketView(StaffTicketView):
         await _transfer_ticket_button_callback(interaction)
 
     @discord.ui.button(
-        label="Tradutor",
+        label="Traduções",
         style=discord.ButtonStyle.secondary,
         emoji="🌐",
-        custom_id="sv_translator",
+        custom_id="sv_translations",
         row=1,
     )
-    async def translator_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _translator_button_callback(interaction)
+    async def translations_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _translations_button_callback(interaction)
 
     @discord.ui.button(
-        label="Tradução (on/off)",
+        label="Alterar idioma",
         style=discord.ButtonStyle.secondary,
-        emoji="🔀",
-        custom_id="sv_toggle_translation",
-        row=2,
+        emoji="🔤",
+        custom_id="sv_change_lang",
+        row=1,
     )
-    async def toggle_translation_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _toggle_translation_button_callback(interaction)
+    async def change_lang_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _change_lang_button_callback(interaction)
 
     @discord.ui.button(
         label="Auto-fechar (on/off)",
@@ -221,7 +228,7 @@ class TicketView(StaffTicketView):
         except discord.Forbidden:
             pass
 
-        # Desabilita botão de assumir e mantém Fechar + Notificar + Transferir + Tradutor
+        # Desabilita botão de assumir e mantém Fechar + Notificar + Transferir + Traduções + Alterar idioma
         new_view = StaffTicketView(self.bot)
         close_btn = discord.ui.Button(label="Fechar / Close", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="sv_close_ticket")
         close_btn.callback = _close_ticket_button_callback
@@ -232,12 +239,12 @@ class TicketView(StaffTicketView):
         transfer_btn = discord.ui.Button(label="Transferir", style=discord.ButtonStyle.secondary, emoji="↩️", custom_id="sv_transfer_ticket", row=0)
         transfer_btn.callback = _transfer_ticket_button_callback
         new_view.add_item(transfer_btn)
-        translator_btn = discord.ui.Button(label="Tradutor", style=discord.ButtonStyle.secondary, emoji="🌐", custom_id="sv_translator", row=0)
-        translator_btn.callback = _translator_button_callback
-        new_view.add_item(translator_btn)
-        toggle_btn = discord.ui.Button(label="Tradução (on/off)", style=discord.ButtonStyle.secondary, emoji="🔀", custom_id="sv_toggle_translation", row=1)
-        toggle_btn.callback = _toggle_translation_button_callback
-        new_view.add_item(toggle_btn)
+        trans_btn = discord.ui.Button(label="Traduções", style=discord.ButtonStyle.secondary, emoji="🌐", custom_id="sv_translations", row=0)
+        trans_btn.callback = _translations_button_callback
+        new_view.add_item(trans_btn)
+        chlang_btn = discord.ui.Button(label="Alterar idioma", style=discord.ButtonStyle.secondary, emoji="🔤", custom_id="sv_change_lang", row=1)
+        chlang_btn.callback = _change_lang_button_callback
+        new_view.add_item(chlang_btn)
         new_view.add_item(
             discord.ui.Button(label=f"Staff: {staff.name}", style=discord.ButtonStyle.success, emoji="✅", custom_id="sv_claimed", disabled=True)
         )
@@ -297,18 +304,18 @@ async def _close_ticket_button_callback(interaction: discord.Interaction):
         await cog._do_close_ticket(interaction)
 
 
-async def _translator_button_callback(interaction: discord.Interaction):
-    """Callback do botão Tradutor: só staff; envia tradução do chat para PT-BR em mensagem efêmera."""
+async def _translations_button_callback(interaction: discord.Interaction):
+    """Callback do botão Traduções: só staff; abre view com 3 opções (última, 5 últimas, completa)."""
     cog = interaction.client.get_cog("TicketCog")
     if cog:
-        await cog._do_translator(interaction)
+        await cog._do_translations_menu(interaction)
 
 
-async def _toggle_translation_button_callback(interaction: discord.Interaction):
-    """Callback do botão Desativar/Ativar tradução: só staff; alterna tradução do chat para este ticket."""
+async def _change_lang_button_callback(interaction: discord.Interaction):
+    """Callback do botão Alterar idioma: só staff; altera idioma do ticket manualmente (com log)."""
     cog = interaction.client.get_cog("TicketCog")
     if cog:
-        await cog._do_toggle_translation(interaction)
+        await cog._do_change_lang(interaction)
 
 
 async def _toggle_autoclose_button_callback(interaction: discord.Interaction):
@@ -778,7 +785,7 @@ class TicketCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Segurança: só autor do ticket ou cargo suporte podem enviar mensagens."""
+        """Segurança: só autor do ticket ou cargo suporte podem enviar. Tradução invisível em background."""
         if message.author.bot:
             return
 
@@ -791,30 +798,23 @@ class TicketCog(commands.Cog):
         author_id = str(ticket.get("author_id"))
         member = message.author
         content = (message.content or "").strip()
-        # Tradução de tickets: sempre ativada por padrão para este servidor,
-        # podendo ser desativada por ticket via botão "Tradução (on/off)".
-        translation_disabled = ticket.get("translation_disabled", False)
-        do_translation = not translation_disabled
+        author_lang = ticket.get("author_lang") or "en"
 
-        # Autor do ticket pode enviar (detectamos idioma; primeira mensagem grava o motivo no ticket)
+        # Autor do ticket (jogador)
         if str(member.id) == author_id:
             now_iso = datetime.utcnow().isoformat()
             updates = {"last_author_message_at": now_iso}
             if (ticket.get("reason") or "").strip() == "" and content:
                 updates["reason"] = content[:500].strip()
             update_ticket(str(message.channel.id), updates)
-            if do_translation and content and len(content) >= 3:
-                try:
-                    detected = detect_language(content)
-                    if detected not in ("pt", "unknown"):
-                        update_ticket(str(message.channel.id), {"author_detected_lang": detected})
-                    elif detected == "pt":
-                        update_ticket(str(message.channel.id), {"author_detected_lang": "pt"})
-                except Exception:
-                    pass
+            # Traduz em background, salva, atualiza painel staff. NÃO envia nada no chat.
+            if content and len(content) >= 2:
+                asyncio.create_task(self._translate_player_message_background(
+                    message, content, author_id, author_lang,
+                ))
             return
 
-        # Admin ou suporte pode enviar
+        # Staff
         is_staff = member.guild_permissions.administrator or (
             support_role_id and member.get_role(int(support_role_id))
         )
@@ -824,21 +824,23 @@ class TicketCog(commands.Cog):
             if not ticket.get("first_staff_message_at"):
                 updates["first_staff_message_at"] = now_iso
             update_ticket(str(message.channel.id), updates)
-            # Apaga a mensagem do staff e replica no idioma do jogador: "Suporte; [nick]: [mensagem traduzida]"
-            if do_translation and content:
+            if content:
                 try:
                     await message.delete()
-                    author_lang = ticket.get("author_detected_lang") or "en"
-                    if author_lang == "pt":
+                    target_code = lang_to_google_code(author_lang)
+                    if target_code == "pt":
                         say_text = content
                     else:
-                        say_text = await asyncio.to_thread(translate_for_ticket, content, "pt", author_lang) or content
-                    await message.channel.send(f"**Suporte; {member.display_name}:** {say_text[:1900]}")
+                        say_text = await asyncio.to_thread(translate_for_ticket, content, "pt", target_code) or content
+                    sent = await message.channel.send(f"**Suporte; {member.display_name}:** {say_text[:1900]}")
+                    append_ticket_translation(
+                        str(message.channel.id), sent.id, content, say_text, str(member.id), is_player=False
+                    )
                 except Exception:
                     pass
             return
 
-        # Sem permissão: deleta mensagem e avisa (idioma do ticket)
+        # Sem permissão
         try:
             await message.delete()
             warn_text = (
@@ -849,6 +851,39 @@ class TicketCog(commands.Cog):
             warn = await message.channel.send(warn_text, delete_after=5)
             await warn.delete(delay=5)
         except discord.Forbidden:
+            pass
+
+    async def _translate_player_message_background(self, message: discord.Message, content: str, author_id: str, author_lang: str):
+        """Traduz mensagem do jogador para PT (staff lê), salva e atualiza painel. Nunca exibe no chat."""
+        try:
+            translated = content
+            if author_lang != "pt":
+                translated = await asyncio.to_thread(translate_text, content, "pt", "auto") or content
+            append_ticket_translation(str(message.channel.id), message.id, content, translated, author_id, is_player=True)
+            await self._update_staff_panel(message.channel, translated, message.author.display_name or str(message.author))
+        except Exception:
+            pass
+
+    async def _update_staff_panel(self, channel: discord.TextChannel, last_translated: str, author_name: str):
+        """Atualiza embed do painel staff com a última mensagem do jogador traduzida."""
+        ticket = get_ticket_by_channel(str(channel.id))
+        if not ticket:
+            return
+        panel_id = ticket.get("staff_panel_message_id")
+        if not panel_id:
+            return
+        try:
+            panel_msg = await channel.fetch_message(panel_id)
+            embed = discord.Embed(
+                title="📋 Painel Staff — Última mensagem do jogador (traduzida)",
+                description=last_translated[:4000] if last_translated else "*Nenhuma mensagem ainda*",
+                color=0x3498DB,
+            )
+            embed.add_field(name="Jogador", value=author_name, inline=True)
+            embed.add_field(name="Idioma do ticket", value=(ticket.get("author_lang") or "en").upper(), inline=True)
+            embed.set_footer(text="Atualização automática")
+            await panel_msg.edit(embed=embed)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
             pass
 
     _preticket_cache = {}  # (user_id, guild_id) -> server_id (seleção pré-setada)
@@ -871,18 +906,19 @@ class TicketCog(commands.Cog):
             key = (str(user.id), str(guild.id))
             TicketCog._preticket_lang_cache[key] = lang
             view = PreTicketServerView(self.bot, str(guild.id), config, lang)
-            intro = "Select the server below, then click **Continue**." if lang == "en" else "Selecione o servidor abaixo e clique em **Continuar**."
+            intro = "Select the server below, then choose your language." if lang == "en" else "Selecione o servidor abaixo e escolha o idioma."
             await interaction.response.send_message(intro, view=view, ephemeral=True)
         else:
             category_id = _get_category_for_lang(config, lang)
-            modal = PreTicketModal(
-                self.bot, str(guild.id), [], category_id,
-                guild.id, user.id, lang=lang,
+            view = PreTicketLanguageSelectView(
+                self.bot, str(guild.id), config, lang,
+                server_id="", server_name="N/A", category_id=category_id,
             )
-            await interaction.response.send_modal(modal)
+            intro = "Select your language for this ticket:" if lang == "en" else "Selecione o idioma do atendimento:"
+            await interaction.response.send_message(intro, view=view, ephemeral=True)
 
     async def _create_ticket(self, interaction: discord.Interaction, user: discord.Member,
-                             server_id: str, server_name: str, category_id: str | None, nick: str, steam_id: str, reason: str = "", lang: str = "pt"):
+                             server_id: str, server_name: str, category_id: str | None, nick: str, steam_id: str, reason: str = "", lang: str = "pt", author_lang: str = "en"):
         """Cria o canal de ticket com os dados do modal. lang = idioma do painel (pt/en). Motivo é perguntado pela IA no canal após abertura."""
         guild = interaction.guild
         config = get_guild_config(str(guild.id))
@@ -939,6 +975,9 @@ class TicketCog(commands.Cog):
             "server_id": server_id, "server_name": server_name or "N/A",
             "nick": nick, "steam_id": steam_id, "reason": (reason or "").strip(),
             "lang": lang,
+            "author_lang": author_lang,
+            "message_translations": {},
+            "last_translated_message_id": None,
         }
         add_ticket(str(guild.id), ticket_data)
 
@@ -983,6 +1022,16 @@ class TicketCog(commands.Cog):
         view = TicketView(self.bot)
         content = f"<@&{support_role_id}>" if support_role_id else None
         await ticket_channel.send(content=content, embed=embed, view=view)
+
+        # Painel staff: embed fixo com última mensagem traduzida (atualizado quando jogador envia)
+        staff_panel_embed = discord.Embed(
+            title="📋 Painel Staff — Última mensagem do jogador",
+            description="*Aguardando mensagem do jogador...*",
+            color=0x95A5A6,
+        )
+        staff_panel_embed.add_field(name="Idioma do ticket", value=author_lang.upper(), inline=True)
+        staff_panel_msg = await ticket_channel.send(embed=staff_panel_embed)
+        update_ticket(str(ticket_channel.id), {"staff_panel_message_id": staff_panel_msg.id})
 
         # IA pergunta o motivo no canal, marcando o jogador (idioma = painel onde foi aberto)
         author_mention = user.mention
@@ -1031,57 +1080,113 @@ class TicketCog(commands.Cog):
             return
         await interaction.response.send_message("✅ Member notified in DMs." if lang == "en" else "✅ Membro notificado no privado.", ephemeral=True)
 
-    async def _do_translator(self, interaction: discord.Interaction):
-        """Lê as mensagens do ticket, traduz para PT-BR e envia linha a linha só para quem clicou (efêmero). Só staff."""
+    async def _do_translations_menu(self, interaction: discord.Interaction):
+        """Menu com 3 opções: última mensagem, últimas 5, conversa completa. Resposta via ephemeral."""
         ticket = get_ticket_by_channel(str(interaction.channel.id))
         if not ticket:
             return await interaction.response.send_message("❌ Ticket not found.", ephemeral=True)
         config = get_guild_config(str(interaction.guild.id))
         if not _is_staff(interaction.user, config):
-            return await interaction.response.send_message(
-                "❌ Apenas a equipe de suporte pode usar o Tradutor.", ephemeral=True
-            )
-        await interaction.response.defer(ephemeral=True)
-        lines = []
-        async for msg in interaction.channel.history(limit=100, oldest_first=True):
-            if msg.author.bot:
-                continue
-            content = (msg.content or "").strip()
-            if msg.attachments:
-                content += " " + " ".join(a.url for a in msg.attachments)
-            if not content:
-                continue
-            translated = await asyncio.to_thread(translate_text, content, "pt", "auto")
-            author_name = msg.author.display_name or str(msg.author)
-            lines.append(f"**{author_name}:** {translated}")
-        if not lines:
-            return await interaction.followup.send(
-                "Nenhuma mensagem para traduzir neste ticket.", ephemeral=True
-            )
-        full = "\n\n".join(lines)
-        chunk_size = 1900
-        for i in range(0, len(full), chunk_size):
-            chunk = full[i : i + chunk_size]
-            await interaction.followup.send(chunk, ephemeral=True)
-        await interaction.followup.send("✅ Tradução para PT-BR (só você vê).", ephemeral=True)
+            return await interaction.response.send_message("❌ Apenas a equipe de suporte pode usar este botão.", ephemeral=True)
 
-    async def _do_toggle_translation(self, interaction: discord.Interaction):
-        """Alterna tradução do chat para este ticket (só staff). Desativa/ativa embeds e say do suporte."""
+        view = discord.ui.View(timeout=60)
+        opts = [
+            (" Última mensagem (PT)", "sv_trans_last"),
+            (" Últimas 5 mensagens (PT)", "sv_trans_5"),
+            (" Conversa completa (PT)", "sv_trans_full"),
+        ]
+        for label, cid in opts:
+            btn = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, emoji="🌐", custom_id=cid)
+            btn.callback = lambda i, c=cid: self._on_translation_option(i, c)
+            view.add_item(btn)
+        await interaction.response.send_message("Escolha o tipo de tradução (resposta só você vê):", view=view, ephemeral=True)
+
+    async def _on_translation_option(self, interaction: discord.Interaction, option: str):
+        """Processa clique em última / 5 últimas / completa."""
+        ticket = get_ticket_by_channel(str(interaction.channel.id))
+        if not ticket:
+            return await interaction.response.send_message("❌ Ticket não encontrado.", ephemeral=True)
+        trans = ticket.get("message_translations") or {}
+        if not trans:
+            return await interaction.response.send_message("Nenhuma mensagem traduzida neste ticket.", ephemeral=True)
+
+        items = [(int(k), v) for k, v in trans.items()]
+        items.sort(key=lambda x: x[0])
+        author_lang = ticket.get("author_lang") or "en"
+
+        if option == "sv_trans_last":
+            last = items[-1] if items else None
+            if not last:
+                return await interaction.response.send_message("Nenhuma mensagem traduzida.", ephemeral=True)
+            _, v = last
+            who = "Jogador" if v.get("is_player") else "Staff"
+            text = f"**{who}:** {v.get('translated', v.get('content', ''))}"
+            await interaction.response.send_message(text[:1900], ephemeral=True)
+            return
+
+        if option == "sv_trans_5":
+            last5 = items[-5:]
+            lines = []
+            for _, v in last5:
+                who = "Jogador" if v.get("is_player") else "Staff"
+                lines.append(f"**{who}:** {v.get('translated', v.get('content', ''))}")
+            full = "\n\n".join(lines)
+            await interaction.response.send_message(full[:1900] if len(full) <= 1900 else full[:1900] + "\n...", ephemeral=True)
+            return
+
+        if option == "sv_trans_full":
+            await interaction.response.defer(ephemeral=True)
+            lines = []
+            for _, v in items:
+                who = "Jogador" if v.get("is_player") else "Staff"
+                lines.append(f"**{who}:** {v.get('translated', v.get('content', ''))}")
+            full = "\n\n".join(lines)
+            chunk_size = 1900
+            for i in range(0, len(full), chunk_size):
+                chunk = full[i : i + chunk_size]
+                await interaction.followup.send(chunk, ephemeral=True)
+            await interaction.followup.send("✅ Conversa completa em PT.", ephemeral=True)
+
+    async def _do_change_lang(self, interaction: discord.Interaction):
+        """Altera idioma do ticket manualmente (só staff, com log)."""
         ticket = get_ticket_by_channel(str(interaction.channel.id))
         if not ticket:
             return await interaction.response.send_message("❌ Ticket not found.", ephemeral=True)
         config = get_guild_config(str(interaction.guild.id))
         if not _is_staff(interaction.user, config):
-            return await interaction.response.send_message(
-                "❌ Apenas a equipe de suporte pode usar este botão.", ephemeral=True
-            )
-        disabled = not ticket.get("translation_disabled", False)
-        update_ticket(str(interaction.channel.id), {"translation_disabled": disabled})
-        if disabled:
-            msg = "✅ Tradução do chat **desativada** para este ticket."
-        else:
-            msg = "✅ Tradução do chat **ativada** para este ticket."
-        await interaction.response.send_message(msg, ephemeral=True)
+            return await interaction.response.send_message("❌ Apenas a equipe de suporte pode usar este botão.", ephemeral=True)
+
+        options = [discord.SelectOption(label=f"{emoji} {label}", value=str(code)) for code, emoji, label in get_lang_options_for_select()]
+        select = discord.ui.Select(
+            placeholder="Novo idioma do ticket",
+            options=options[:25],
+            custom_id="sv_change_lang_select",
+        )
+
+        async def on_select(callback_interaction: discord.Interaction):
+            if callback_interaction.data and callback_interaction.data.get("values"):
+                new_lang = callback_interaction.data["values"][0]
+                old_lang = ticket.get("author_lang") or "en"
+                log_entries = list(ticket.get("translation_log") or [])
+                log_entries.append({
+                    "ts": datetime.utcnow().isoformat(),
+                    "event": "lang_change",
+                    "from": old_lang,
+                    "to": new_lang,
+                    "by": str(callback_interaction.user.id),
+                })
+                if len(log_entries) > 50:
+                    log_entries = log_entries[-50:]
+                update_ticket(str(interaction.channel.id), {"author_lang": new_lang, "translation_log": log_entries})
+                await callback_interaction.response.send_message(
+                    f"✅ Idioma alterado de {old_lang.upper()} para {new_lang.upper()} (registrado no ticket).",
+                    ephemeral=True,
+                )
+
+        select.callback = on_select
+        view = discord.ui.View(timeout=60)
+        view.add_item(select)
+        await interaction.response.send_message("Selecione o novo idioma (alteração manual — registrada no ticket):", view=view, ephemeral=True)
 
     async def _do_toggle_autoclose(self, interaction: discord.Interaction):
         """Ativa/desativa auto-fechamento por inatividade para este ticket (só staff)."""
@@ -1153,12 +1258,12 @@ class TicketCog(commands.Cog):
             transfer_btn = discord.ui.Button(label="Transferir", style=discord.ButtonStyle.secondary, emoji="↩️", custom_id="sv_transfer_ticket", row=0)
             transfer_btn.callback = _transfer_ticket_button_callback
             new_view.add_item(transfer_btn)
-            translator_btn = discord.ui.Button(label="Tradutor", style=discord.ButtonStyle.secondary, emoji="🌐", custom_id="sv_translator", row=0)
-            translator_btn.callback = _translator_button_callback
-            new_view.add_item(translator_btn)
-            toggle_btn = discord.ui.Button(label="Tradução (on/off)", style=discord.ButtonStyle.secondary, emoji="🔀", custom_id="sv_toggle_translation", row=1)
-            toggle_btn.callback = _toggle_translation_button_callback
-            new_view.add_item(toggle_btn)
+            trans_btn = discord.ui.Button(label="Traduções", style=discord.ButtonStyle.secondary, emoji="🌐", custom_id="sv_translations", row=0)
+            trans_btn.callback = _translations_button_callback
+            new_view.add_item(trans_btn)
+            chlang_btn = discord.ui.Button(label="Alterar idioma", style=discord.ButtonStyle.secondary, emoji="🔤", custom_id="sv_change_lang", row=1)
+            chlang_btn.callback = _change_lang_button_callback
+            new_view.add_item(chlang_btn)
             new_view.add_item(
                 discord.ui.Button(label=f"Staff: {new_staff.name}", style=discord.ButtonStyle.success, emoji="✅", custom_id="sv_claimed", disabled=True)
             )
@@ -1512,8 +1617,51 @@ class LogsConfigView(discord.ui.View):
         return True
 
 
+class PreTicketLanguageSelectView(discord.ui.View):
+    """OBRIGATÓRIO: seleção de idioma do jogador antes de criar o ticket. Idioma ficará FIXO até fechar."""
+
+    def __init__(self, bot, guild_id: str, config: dict, lang: str,
+                 server_id: str = "", server_name: str = "N/A", category_id: str | None = None):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.guild_id = guild_id
+        self.config = config
+        self._lang = lang
+        self._server_id = server_id
+        self._server_name = server_name
+        self._category_id = category_id or _get_category_for_lang(config, lang)
+        options = [
+            discord.SelectOption(label=label, value=str(code), emoji=emoji)
+            for code, emoji, label in get_lang_options_for_select()
+        ]
+        select = discord.ui.Select(
+            placeholder="Selecione o idioma / Select language" if lang == "pt" else "Select your language",
+            options=options[:25],
+            custom_id="sv_preticket_lang",
+            row=0,
+        )
+        select.callback = self._on_select_lang
+        self.add_item(select)
+
+    async def _on_select_lang(self, interaction: discord.Interaction):
+        values = interaction.data.get("values") if interaction.data else []
+        if not values:
+            msg = "❌ Selecione um idioma." if self._lang == "pt" else "❌ Select a language."
+            return await interaction.response.send_message(msg, ephemeral=True)
+        author_lang = values[0]
+        modal = PreTicketModal(
+            self.bot, self.guild_id, [], self._category_id,
+            interaction.guild.id, interaction.user.id, lang=self._lang or "pt",
+            preselected_server_id=self._server_id,
+            preselected_server_name=self._server_name,
+            preselected_category_id=self._category_id or "",
+            author_lang=author_lang,
+        )
+        await interaction.response.send_modal(modal)
+
+
 class PreTicketServerView(discord.ui.View):
-    """View com Select de servidores pré-setados. Ao selecionar, já abre o modal (nick, steam). Motivo é perguntado pela IA no canal após abrir."""
+    """View com Select de servidores. Ao selecionar, exibe seleção OBRIGATÓRIA de idioma."""
 
     def __init__(self, bot, guild_id: str, config: dict, lang: str):
         super().__init__(timeout=120)
@@ -1537,7 +1685,7 @@ class PreTicketServerView(discord.ui.View):
             self.add_item(select)
 
     async def _on_select_server(self, interaction: discord.Interaction, select: discord.ui.Select | None = None):
-        """Ao selecionar o servidor no select, já abre diretamente o modal de dados do ticket."""
+        """Ao selecionar servidor, exibe menu OBRIGATÓRIO de idioma antes do modal."""
         values = (select.values if select else None) or (interaction.data.get("values") if interaction.data else [])
         if not values:
             msg = "❌ Selecione um servidor válido." if self._lang == "pt" else "❌ Select a valid server."
@@ -1551,14 +1699,14 @@ class PreTicketServerView(discord.ui.View):
             return await interaction.response.send_message(msg, ephemeral=True)
 
         category_fallback = _get_category_for_lang(self.config, self._lang or "pt")
-        modal = PreTicketModal(
-            self.bot, self.guild_id, [], category_fallback,
-            interaction.guild.id, interaction.user.id, lang=self._lang or "pt",
-            preselected_server_id=str(server.get("id", "")),
-            preselected_server_name=server.get("name") or "N/A",
-            preselected_category_id="",
+        view = PreTicketLanguageSelectView(
+            self.bot, self.guild_id, self.config, self._lang or "pt",
+            server_id=str(server.get("id", "")),
+            server_name=server.get("name") or "N/A",
+            category_id=category_fallback,
         )
-        await interaction.response.send_modal(modal)
+        intro = "Selecione o idioma do atendimento abaixo:" if self._lang == "pt" else "Select your language for this ticket:"
+        await interaction.response.edit_message(content=intro, view=view)
 
 
 # Textos do modal de abertura de ticket (PT = painel PT-BR; EN = painel US). Motivo é perguntado pela IA no canal após abrir.
@@ -1586,10 +1734,11 @@ _PRETICKET_MODAL_STRINGS = {
 }
 
 class PreTicketModal(Modal):
-    """Modal: nick e Steam ID. Servidor vem do Select (pré-setado) ou não há servidores. Motivo é perguntado pela IA no canal após abrir o ticket."""
+    """Modal: nick e Steam ID. Servidor e autor_lang vêm do Select. Motivo é perguntado pela IA no canal após abrir."""
 
     def __init__(self, bot, guild_id: str, servers: list, category_id: str | None, guild_id_int: int, user_id_int: int, lang: str = "pt",
-                 preselected_server_id: str | None = None, preselected_server_name: str | None = None, preselected_category_id: str | None = None):
+                 preselected_server_id: str | None = None, preselected_server_name: str | None = None, preselected_category_id: str | None = None,
+                 author_lang: str = "en"):
         strings = _PRETICKET_MODAL_STRINGS.get(lang) or _PRETICKET_MODAL_STRINGS["pt"]
         super().__init__(timeout=120, title=strings["title"])
         self.bot = bot
@@ -1599,6 +1748,7 @@ class PreTicketModal(Modal):
         self._guild_id_int = guild_id_int
         self._user_id_int = user_id_int
         self._lang = lang
+        self._author_lang = author_lang
         self._preselected = (preselected_server_id, preselected_server_name or "N/A", preselected_category_id or "")
 
         # Só pede servidor por texto se não tiver servidores pré-setados e não veio servidor selecionado
@@ -1662,6 +1812,7 @@ class PreTicketModal(Modal):
             self.steam_input.value.strip(),
             reason="",
             lang=self._lang,
+            author_lang=self._author_lang,
         )
 
 
