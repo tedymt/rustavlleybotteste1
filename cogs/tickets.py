@@ -41,6 +41,7 @@ from utils.translator import (
     translate_for_ticket,
     get_lang_options_for_select,
     lang_to_google_code,
+    t,
 )
 
 
@@ -187,35 +188,25 @@ class TicketView(StaffTicketView):
             return await interaction.response.send_message("❌ Ticket not found.", ephemeral=True)
         config = get_guild_config(str(interaction.guild.id))
         if not _is_staff(interaction.user, config):
-            msg = "❌ Only support staff can claim this ticket." if ticket.get("lang") == "en" else "❌ Apenas a equipe de suporte pode assumir o ticket."
-            return await interaction.response.send_message(msg, ephemeral=True)
+            return await interaction.response.send_message(f"❌ {t('staff_only_claim', ticket.get('author_lang') or 'en')}", ephemeral=True)
 
         staff = interaction.user
         author_id = ticket.get("author_id")
-        lang = ticket.get("lang", "pt")
+        author_lang = ticket.get("author_lang") or "en"
         update_ticket(str(interaction.channel.id), {"staff_id": str(staff.id)})
 
-        # Mensagem na sala no idioma do ticket (painel US = só inglês)
         author_mention = f"<@{author_id}>"
-        if lang == "en":
-            channel_msg = f"✅ {author_mention} — **{staff.display_name}** claimed your ticket and will assist you."
-        else:
-            channel_msg = f"✅ {author_mention} — **{staff.display_name}** assumiu seu ticket e irá atendê-lo."
+        channel_msg = f"✅ {t('claim_channel', author_lang, mention=author_mention, staff=staff.display_name)}"
         await interaction.response.send_message(channel_msg, ephemeral=False)
 
-        # DM para quem abriu o ticket — idioma do ticket, com botão para abrir
         try:
             author = await self.bot.fetch_user(author_id)
-            if lang == "en":
-                dm_title = "✅ Ticket claimed"
-                dm_desc = f"Someone from the team claimed your ticket!\n**{staff.display_name}** will assist you shortly."
-            else:
-                dm_title = "✅ Ticket assumido"
-                dm_desc = f"Alguém da equipe assumiu seu ticket!\n**{staff.display_name}** irá atendê-lo em breve."
+            dm_title = f"✅ {t('claim_dm_title', author_lang)}"
+            dm_desc = t("claim_dm_desc", author_lang, staff=staff.display_name)
             dm_embed = discord.Embed(title=dm_title, description=dm_desc, color=0x2ECC71)
             channel_link = f"https://discord.com/channels/{interaction.guild.id}/{interaction.channel.id}"
             dm_view = discord.ui.View()
-            dm_btn_label = "Open ticket" if lang == "en" else "Abrir ticket"
+            dm_btn_label = t("open_ticket", author_lang)
             dm_view.add_item(
                 discord.ui.Button(
                     label=dm_btn_label,
@@ -397,11 +388,8 @@ class TicketCog(commands.Cog):
             )
         config = get_guild_config(str(interaction.guild.id))
         delay_sec = max(1, int(config.get("ticket_close_delay_seconds", 60)))
-        ticket_lang = ticket.get("lang", "pt")
-        if ticket_lang == "en":
-            close_confirm = f"🔒 **This ticket will be closed in {delay_sec} second(s).**"
-        else:
-            close_confirm = f"🔒 **Este ticket será encerrado em {delay_sec} segundo(s).**"
+        author_lang = ticket.get("author_lang") or "en"
+        close_confirm = f"🔒 **{t('close_confirm', author_lang, n=delay_sec)}**"
         await interaction.response.send_message(close_confirm, ephemeral=False)
         channel_id = str(interaction.channel.id)
         guild_id = str(interaction.guild.id)
@@ -464,7 +452,7 @@ class TicketCog(commands.Cog):
             author = await self.bot.fetch_user(ticket["author_id"])
         except (discord.NotFound, ValueError):
             pass
-        ticket_lang = ticket.get("lang", "pt")
+        author_lang = ticket.get("author_lang") or "en"
 
         html_content = build_transcript_html(ticket_updated, messages_for_transcript, guild_name)
         html_filename = f"transcript_{code}.html"
@@ -474,21 +462,11 @@ class TicketCog(commands.Cog):
             try:
                 if auto_close and inactivity_reason:
                     dm_text = inactivity_reason
-                elif ticket_lang == "en":
-                    dm_text = (
-                        f"✅ **Support finished** on **{guild_name}**.\n"
-                        f"**Protocol:** `{code}` | **Duration:** {duration}\n\n"
-                        "📄 **Transcript copy attached** (HTML). Download and open in your browser to view anytime."
-                    )
                 else:
-                    dm_text = (
-                        f"✅ **Atendimento finalizado** em **{guild_name}**.\n"
-                        f"Protocolo: `{code}` | Duração: {duration}\n\n"
-                        "📄 **Cópia do transcript em anexo** (HTML). Baixe e abra no navegador para ver a qualquer momento."
-                    )
+                    dm_text = f"✅ **{t('closed_dm', author_lang, guild=guild_name, code=code, duration=duration)}**"
                 channel_link = f"https://discord.com/channels/{guild.id}/{channel.id}"
                 dm_view = discord.ui.View()
-                dm_btn_label = "Open ticket" if ticket_lang == "en" else "Abrir ticket"
+                dm_btn_label = t("open_ticket", author_lang)
                 dm_view.add_item(
                     discord.ui.Button(
                         label=dm_btn_label,
@@ -507,12 +485,8 @@ class TicketCog(commands.Cog):
             if ch and isinstance(ch, discord.TextChannel):
                 try:
                     file_canal = discord.File(fp=io.BytesIO(html_content.encode("utf-8")), filename=html_filename)
-                    if ticket_lang == "en":
-                        desc_canal = f"Ticket closed • User <@{ticket['author_id']}> • Duration: {duration}"
-                        footer_canal = "HTML file attached for archive."
-                    else:
-                        desc_canal = f"Ticket fechado • Usuário <@{ticket['author_id']}> • Duração: {duration}"
-                        footer_canal = "Arquivo HTML em anexo para arquivo."
+                    desc_canal = t("transcript_desc", author_lang, user=f"<@{ticket['author_id']}>", duration=duration)
+                    footer_canal = t("transcript_footer", author_lang)
                     embed_canal = discord.Embed(
                         title=f"📑 Transcript — {code}",
                         description=desc_canal,
@@ -531,21 +505,17 @@ class TicketCog(commands.Cog):
             log_channel = guild.get_channel(int(config["logs_channel_id"]))
             if log_channel:
                 staff = await self.bot.fetch_user(ticket["staff_id"]) if ticket.get("staff_id") else None
-                if ticket_lang == "en":
-                    log_title = "📑 Ticket Closed" + (" (auto: inactivity)" if auto_close else "")
-                    log_footer = "Transcript sent in DM (HTML) and to transcript channel"
-                else:
-                    log_title = "📑 Ticket Fechado" + (" (auto: inatividade)" if auto_close else "")
-                    log_footer = "Transcript enviado em DM (HTML) e no canal de transcripts"
+                log_title = f"📑 {t('log_title_auto' if auto_close else 'log_title', author_lang)}"
+                log_footer = t("log_footer", author_lang)
                 embed = discord.Embed(
                     title=log_title,
                     color=color_from_hex(config.get("color", "#5865F2")),
                     timestamp=datetime.utcnow(),
                 )
-                embed.add_field(name="Protocolo" if ticket_lang == "pt" else "Protocol", value=f"`{code}`", inline=True)
-                embed.add_field(name="Usuário" if ticket_lang == "pt" else "User", value=str(author or ticket["author_id"]), inline=True)
+                embed.add_field(name=t("protocol", author_lang), value=f"`{code}`", inline=True)
+                embed.add_field(name=t("user", author_lang), value=str(author or ticket["author_id"]), inline=True)
                 embed.add_field(name="Staff", value=str(staff or "N/A"), inline=True)
-                embed.add_field(name="Duração" if ticket_lang == "pt" else "Duration", value=duration, inline=True)
+                embed.add_field(name=t("duration", author_lang), value=duration, inline=True)
                 embed.set_footer(text=log_footer)
                 await log_channel.send(embed=embed)
 
@@ -843,11 +813,7 @@ class TicketCog(commands.Cog):
         # Sem permissão
         try:
             await message.delete()
-            warn_text = (
-                f"⚠️ {member.mention} — Only the ticket author and support team can send messages here."
-                if ticket.get("lang") == "en"
-                else f"⚠️ {member.mention} — Apenas o autor do ticket e a equipe de suporte podem enviar mensagens aqui."
-            )
+            warn_text = f"⚠️ {member.mention} — {t('only_author_support', ticket.get('author_lang') or 'en')}"
             warn = await message.channel.send(warn_text, delete_after=5)
             await warn.delete(delay=5)
         except discord.Forbidden:
@@ -961,9 +927,7 @@ class TicketCog(commands.Cog):
         except discord.HTTPException as e:
             err_msg = str(e).lower()
             if "category" in err_msg or "parent" in err_msg or "50035" in str(e):
-                msg_pt = "❌ A categoria de tickets configurada não existe mais. Peça a um administrador usar `!sup` → Ticket → reconfigurar a categoria."
-                msg_en = "❌ The ticket category no longer exists. Ask an admin to use `!sup` → Ticket → reconfigure the category."
-                await interaction.response.send_message(msg_pt if lang == "pt" else msg_en, ephemeral=True)
+                await interaction.response.send_message(t("err_category", author_lang), ephemeral=True)
             else:
                 await interaction.response.send_message(f"❌ Erro ao criar ticket: {e}", ephemeral=True)
             return
@@ -981,33 +945,15 @@ class TicketCog(commands.Cog):
         }
         add_ticket(str(guild.id), ticket_data)
 
-        title_pt = config.get("ticket_title_pt", "Atendimento Iniciado")
-        title_en = config.get("ticket_title_en", "Support Started")
-        desc_pt = config.get("ticket_desc_pt", "Olá! Nossa equipe foi notificada.")
-        desc_en = config.get("ticket_desc_en", "Hello! Our team has been notified.")
         banner = config.get("ticket_banner")
-
-        # Embed sem motivo — motivo será perguntado pela IA no canal (marcando o jogador)
-        if lang == "en":
-            embed_title = title_en
-            embed_desc = (
-                f"{desc_en}\n\n"
-                f"🆔 **Protocol:** `{ticket_code}`\n"
-                f"🖥️ **Server:** {server_name or 'N/A'}\n"
-                f"🎮 **Nick in-game:** {nick}\n"
-                f"📌 **Steam ID:** {steam_id}"
-            )
-            embed_footer = "Suporte Valley • Ticket System"
-        else:
-            embed_title = title_pt
-            embed_desc = (
-                f"{desc_pt}\n\n"
-                f"🆔 **Protocolo:** `{ticket_code}`\n"
-                f"🖥️ **Servidor:** {server_name or 'N/A'}\n"
-                f"🎮 **Nick in-game:** {nick}\n"
-                f"📌 **Steam ID:** {steam_id}"
-            )
-            embed_footer = "Suporte Valley • Sistema de Tickets"
+        embed_title = t("ticket_title", author_lang)
+        embed_desc = (
+            f"{t('ticket_desc', author_lang)}\n\n"
+            f"🆔 **{t('protocol', author_lang)}:** `{ticket_code}`\n"
+            f"🖥️ **{t('server', author_lang)}:** {server_name or 'N/A'}\n"
+            f"🎮 **{t('nick_in_game', author_lang)}:** {nick}\n"
+            f"📌 **Steam ID:** {steam_id}"
+        )
 
         embed = discord.Embed(
             title=embed_title,
@@ -1017,31 +963,27 @@ class TicketCog(commands.Cog):
         if banner:
             embed.set_image(url=banner)
         embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
-        embed.set_footer(text=embed_footer)
+        embed.set_footer(text="Suporte Valley • Ticket System")
 
         view = TicketView(self.bot)
         content = f"<@&{support_role_id}>" if support_role_id else None
         await ticket_channel.send(content=content, embed=embed, view=view)
 
-        # Painel staff: embed fixo com última mensagem traduzida (atualizado quando jogador envia)
+        # Painel staff: embed fixo (título/desc no idioma do jogador)
         staff_panel_embed = discord.Embed(
-            title="📋 Painel Staff — Última mensagem do jogador",
-            description="*Aguardando mensagem do jogador...*",
+            title=f"📋 {t('panel_staff_title', author_lang)}",
+            description=f"*{t('panel_staff_waiting', author_lang)}*",
             color=0x95A5A6,
         )
-        staff_panel_embed.add_field(name="Idioma do ticket", value=author_lang.upper(), inline=True)
+        staff_panel_embed.add_field(name=t("panel_ticket_lang", author_lang), value=author_lang.upper(), inline=True)
         staff_panel_msg = await ticket_channel.send(embed=staff_panel_embed)
         update_ticket(str(ticket_channel.id), {"staff_panel_message_id": staff_panel_msg.id})
 
-        # IA pergunta o motivo no canal, marcando o jogador (idioma = painel onde foi aberto)
         author_mention = user.mention
-        if lang == "en":
-            ask_reason_msg = f"👋 {author_mention} — **What is the reason for opening this ticket?** Please describe your issue or question below."
-        else:
-            ask_reason_msg = f"👋 {author_mention} — **Qual o motivo da abertura deste ticket?** Descreva seu problema ou dúvida abaixo."
+        ask_reason_msg = f"👋 {author_mention} — **{t('ask_reason', author_lang)}**"
         await ticket_channel.send(ask_reason_msg)
 
-        confirm_msg = f"✅ **Ticket created:** {ticket_channel.mention}" if lang == "en" else f"✅ **Ticket criado:** {ticket_channel.mention}"
+        confirm_msg = f"✅ **{t('confirm_created', author_lang)}:** {ticket_channel.mention}"
         await interaction.response.send_message(confirm_msg, ephemeral=True)
 
     async def _do_notify_dm(self, interaction: discord.Interaction):
@@ -1051,23 +993,17 @@ class TicketCog(commands.Cog):
             return await interaction.response.send_message("❌ Ticket not found.", ephemeral=True)
         config = get_guild_config(str(interaction.guild.id))
         if not _is_staff(interaction.user, config):
-            msg = "❌ Only support staff can use this button." if ticket.get("lang") == "en" else "❌ Apenas a equipe de suporte pode usar este botão."
-            return await interaction.response.send_message(msg, ephemeral=True)
+            return await interaction.response.send_message(f"❌ {t('staff_only', ticket.get('author_lang') or 'en')}", ephemeral=True)
         author_id = ticket.get("author_id")
         try:
             author = await self.bot.fetch_user(int(author_id))
         except (discord.NotFound, ValueError):
             return await interaction.response.send_message("❌ Não foi possível encontrar o usuário.", ephemeral=True)
-        lang = ticket.get("lang", "pt")
+        author_lang = ticket.get("author_lang") or "en"
         channel_link = f"https://discord.com/channels/{interaction.guild.id}/{interaction.channel.id}"
-        if lang == "en":
-            title = "📩 Update on your ticket"
-            description = "The support team sent you an update on your ticket. Click the button below to open the ticket."
-            btn_label = "Open ticket"
-        else:
-            title = "📩 Atualização no seu ticket"
-            description = "A equipe de suporte te enviou uma atualização no seu ticket. Clique no botão abaixo para abrir o ticket."
-            btn_label = "Abrir ticket"
+        title = f"📩 {t('notify_dm_title', author_lang)}"
+        description = t("notify_dm_desc", author_lang)
+        btn_label = t("open_ticket", author_lang)
         embed = discord.Embed(title=title, description=description, color=0x5865F2)
         embed.set_footer(text=interaction.guild.name)
         view = discord.ui.View()
@@ -1075,10 +1011,9 @@ class TicketCog(commands.Cog):
         try:
             await author.send(embed=embed, view=view)
         except discord.Forbidden:
-            fail_msg = "❌ Could not send DM (user may have DMs disabled)." if lang == "en" else "❌ Não foi possível enviar DM (usuário pode ter DMs desativadas)."
-            await interaction.response.send_message(fail_msg, ephemeral=True)
+            await interaction.response.send_message("❌ Não foi possível enviar DM (usuário pode ter DMs desativadas).", ephemeral=True)
             return
-        await interaction.response.send_message("✅ Member notified in DMs." if lang == "en" else "✅ Membro notificado no privado.", ephemeral=True)
+        await interaction.response.send_message("✅ Member notified in DMs.", ephemeral=True)
 
     async def _do_translations_menu(self, interaction: discord.Interaction):
         """Menu com 3 opções: última mensagem, últimas 5, conversa completa. Resposta via ephemeral."""
@@ -1222,9 +1157,9 @@ class TicketCog(commands.Cog):
             str(interaction.guild.id),
             str(interaction.channel.id),
             interaction.message.id,
-            lang=lang,
+            lang=author_lang,
         )
-        prompt = "**Transfer ticket** — Select a support member to take over this ticket:" if lang == "en" else "**Transferir ticket** — Selecione um membro da equipe de suporte para assumir este ticket:"
+        prompt = f"**{t('transfer_prompt', author_lang)}**"
         await interaction.response.send_message(prompt, view=view, ephemeral=True)
 
     async def _do_transfer_ticket(self, interaction: discord.Interaction, new_staff: discord.Member, channel_id: str, ticket_message_id: int):
@@ -1237,13 +1172,9 @@ class TicketCog(commands.Cog):
         update_ticket(channel_id, {"staff_id": str(new_staff.id)})
         channel = interaction.guild.get_channel(int(channel_id))
         author_mention = f"<@{author_id}>" if author_id else ""
-        lang = ticket.get("lang", "pt")
-        if lang == "en":
-            msg_channel = f"✅ {author_mention} — This ticket was transferred to **{new_staff.display_name}**. They will assist you."
-            msg_ephemeral = f"✅ Ticket transferred to **{new_staff.display_name}**."
-        else:
-            msg_channel = f"✅ {author_mention} — Este ticket foi transferido para **{new_staff.display_name}**. Ele(a) irá atendê-lo."
-            msg_ephemeral = f"✅ Ticket transferido para **{new_staff.display_name}**."
+        author_lang = ticket.get("author_lang") or "en"
+        msg_channel = f"✅ {t('transfer_channel', author_lang, mention=author_mention, staff=new_staff.display_name)}"
+        msg_ephemeral = f"✅ {t('transfer_dm_title', author_lang)} → **{new_staff.display_name}**"
         if channel:
             await channel.send(msg_channel)
         try:
@@ -1273,12 +1204,8 @@ class TicketCog(commands.Cog):
         try:
             author = await self.bot.fetch_user(int(author_id))
             channel_link = f"https://discord.com/channels/{interaction.guild.id}/{int(channel_id)}"
-            if lang == "en":
-                dm_text = f"Your ticket was transferred to **{new_staff.display_name}**. They will assist you shortly."
-                dm_btn_label = "Open ticket"
-            else:
-                dm_text = f"Seu ticket foi transferido para **{new_staff.display_name}**. Ele(a) irá atendê-lo em breve."
-                dm_btn_label = "Abrir ticket"
+            dm_text = t("transfer_dm_desc", author_lang, staff=new_staff.display_name)
+            dm_btn_label = t("open_ticket", author_lang)
             dm_view = discord.ui.View()
             dm_view.add_item(
                 discord.ui.Button(
@@ -1709,38 +1636,13 @@ class PreTicketServerView(discord.ui.View):
         await interaction.response.edit_message(content=intro, view=view)
 
 
-# Textos do modal de abertura de ticket (PT = painel PT-BR; EN = painel US). Motivo é perguntado pela IA no canal após abrir.
-_PRETICKET_MODAL_STRINGS = {
-    "pt": {
-        "title": "Dados do Ticket",
-        "server_label": "Servidor",
-        "server_placeholder": "Ex: EU1, BR1 (veja a lista acima)",
-        "nick_label": "Nick in-game",
-        "nick_placeholder": "Seu nick no servidor",
-        "steam_label": "Steam ID",
-        "steam_placeholder": "Ex: 76561198012345678",
-        "invalid_server": "Servidor inválido. Use um da lista (ex: EU1, BR1).",
-    },
-    "en": {
-        "title": "Ticket details",
-        "server_label": "Server",
-        "server_placeholder": "e.g. EU1, BR1 (see list above)",
-        "nick_label": "Nick in-game",
-        "nick_placeholder": "Your in-game nickname",
-        "steam_label": "Steam ID",
-        "steam_placeholder": "e.g. 76561198012345678",
-        "invalid_server": "Invalid server. Use one from the list (e.g. EU1, BR1).",
-    },
-}
-
 class PreTicketModal(Modal):
     """Modal: nick e Steam ID. Servidor e autor_lang vêm do Select. Motivo é perguntado pela IA no canal após abrir."""
 
     def __init__(self, bot, guild_id: str, servers: list, category_id: str | None, guild_id_int: int, user_id_int: int, lang: str = "pt",
                  preselected_server_id: str | None = None, preselected_server_name: str | None = None, preselected_category_id: str | None = None,
                  author_lang: str = "en"):
-        strings = _PRETICKET_MODAL_STRINGS.get(lang) or _PRETICKET_MODAL_STRINGS["pt"]
-        super().__init__(timeout=120, title=strings["title"])
+        super().__init__(timeout=120, title=t("modal_title", author_lang))
         self.bot = bot
         self.guild_id = guild_id
         self.servers = servers or []
@@ -1754,9 +1656,9 @@ class PreTicketModal(Modal):
         # Só pede servidor por texto se não tiver servidores pré-setados e não veio servidor selecionado
         if self.servers and not preselected_server_id:
             server_names = ", ".join((s.get("name") or "?") for s in self.servers[:10])
-            placeholder = (f"e.g. {server_names}" if lang == "en" else f"Ex: {server_names}")[:100]
+            placeholder = f"Ex: {server_names}"[:100]
             self.server_input = TextInput(
-                label=strings["server_label"],
+                label=t("server", author_lang),
                 placeholder=placeholder,
                 required=True,
                 max_length=50,
@@ -1766,14 +1668,14 @@ class PreTicketModal(Modal):
             self.server_input = None
 
         self.nick_input = TextInput(
-            label=strings["nick_label"],
-            placeholder=strings["nick_placeholder"],
+            label=t("nick_label", author_lang),
+            placeholder=t("nick_placeholder", author_lang),
             required=True,
             max_length=50,
         )
         self.steam_input = TextInput(
-            label=strings["steam_label"],
-            placeholder=strings["steam_placeholder"],
+            label=t("steam_label", author_lang),
+            placeholder=t("steam_placeholder", author_lang),
             required=True,
             max_length=30,
         )
@@ -1799,8 +1701,7 @@ class PreTicketModal(Modal):
             raw = self.server_input.value.strip()
             sid, sname, cid = self._resolve_server(raw)
             if sid is None:
-                strings = _PRETICKET_MODAL_STRINGS.get(self._lang) or _PRETICKET_MODAL_STRINGS["pt"]
-                return await interaction.response.send_message("❌ " + strings["invalid_server"], ephemeral=True)
+                return await interaction.response.send_message(f"❌ {t('invalid_server', self._author_lang)}", ephemeral=True)
             server_id, server_name, category_id = sid, sname, cid
         else:
             server_id, server_name, category_id = "", "N/A", self.category_id
