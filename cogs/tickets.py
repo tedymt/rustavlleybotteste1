@@ -9,6 +9,7 @@ Sistema de Tickets do Suporte Valley.
 """
 import asyncio
 import io
+import re
 import random
 import string
 from datetime import datetime, timedelta
@@ -43,6 +44,23 @@ from utils.translator import (
     lang_to_google_code,
     t,
 )
+
+
+# Steam ID 64: 17 dígitos, começa com 7656119 (padrão Steam)
+_STEAM_ID64_PATTERN = re.compile(r"^7656119[0-9]{10}$")
+
+
+def is_valid_steam_id64(value: str) -> tuple[bool, str]:
+    """
+    Valida Steam ID 64: 17 dígitos começando com 7656119. Ex: 76561198753318292
+    Retorna (válido, valor_normalizado). Remove espaços antes de validar.
+    """
+    if not value or not value.strip():
+        return False, ""
+    cleaned = value.strip().replace(" ", "")
+    if _STEAM_ID64_PATTERN.fullmatch(cleaned):
+        return True, cleaned
+    return False, cleaned
 
 
 def generate_ticket_code() -> str:
@@ -1706,11 +1724,16 @@ class PreTicketModal(Modal):
         else:
             server_id, server_name, category_id = "", "N/A", self.category_id
 
+        steam_raw = self.steam_input.value.strip()
+        valid, steam_id = is_valid_steam_id64(steam_raw)
+        if not valid:
+            return await interaction.response.send_message(f"❌ {t('invalid_steam_id', self._author_lang)}", ephemeral=True)
+
         await cog._create_ticket(
             interaction, interaction.user,
             server_id, server_name, category_id,
             self.nick_input.value.strip(),
-            self.steam_input.value.strip(),
+            steam_id,
             reason="",
             lang=self._lang,
             author_lang=self._author_lang,
