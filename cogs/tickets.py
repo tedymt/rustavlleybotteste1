@@ -436,6 +436,7 @@ class TicketCog(commands.Cog):
         """Executa transcript, DM, canal de transcripts, logs e deleta o canal."""
         # Coleta mensagens para transcript (menções e cargos como nomes, não código)
         messages_data = []
+        say_msg_staff = ticket.get("say_msg_staff") or {}
         async for msg in channel.history(limit=500, oldest_first=True):
             content = msg.content or ""
             for u in (msg.mentions or []):
@@ -446,9 +447,21 @@ class TicketCog(commands.Cog):
                 content += " " + " ".join(a.url for a in msg.attachments)
             raw_for_translate = (msg.content or "").strip()
             translations = await asyncio.to_thread(translate_to_both, raw_for_translate) if raw_for_translate else {"pt": "", "en": ""}
+
+            author_id = str(msg.author.id)
+            author_name = msg.author.display_name or str(msg.author)
+            staff_id = say_msg_staff.get(str(msg.id))
+            if staff_id:
+                try:
+                    staff_user = await self.bot.fetch_user(int(staff_id))
+                    author_id = str(staff_user.id)
+                    author_name = getattr(staff_user, "global_name", None) or staff_user.name or str(staff_user)
+                except (discord.NotFound, ValueError, TypeError):
+                    pass
+
             messages_data.append({
-                "author_id": str(msg.author.id),
-                "author_name": msg.author.display_name,
+                "author_id": author_id,
+                "author_name": author_name,
                 "content": content,
                 "translations": translations if raw_for_translate else {},
                 "timestamp": msg.created_at.isoformat(),
@@ -808,7 +821,7 @@ class TicketCog(commands.Cog):
         )
         if is_staff:
             now_iso = datetime.utcnow().isoformat()
-            updates = {"last_staff_message_at": now_iso}
+            updates = {"last_staff_message_at": now_iso, "staff_id": str(member.id)}
             if not ticket.get("first_staff_message_at"):
                 updates["first_staff_message_at"] = now_iso
             update_ticket(str(message.channel.id), updates)
@@ -824,6 +837,11 @@ class TicketCog(commands.Cog):
                     append_ticket_translation(
                         str(message.channel.id), sent.id, content, say_text, str(member.id), is_player=False
                     )
+                    say_map = dict(ticket.get("say_msg_staff") or {})
+                    say_map[str(sent.id)] = str(member.id)
+                    if len(say_map) > 200:
+                        say_map = dict(list(say_map.items())[-200:])
+                    update_ticket(str(message.channel.id), {"say_msg_staff": say_map})
                 except Exception:
                     pass
             return
