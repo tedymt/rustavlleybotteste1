@@ -1,54 +1,86 @@
-# Deploy no Discloud via GitHub
+# Deploy do Rust Valley Bot Teste no Discloud (Discord.cloud)
 
-## Persistência da configuração
+## Configuração pronta
 
-Para manter canal de tickets, cargo de suporte etc. após cada deploy:
+O projeto já está configurado para rodar na [Discloud](https://discloud.com) (Discord.cloud):
 
-1. **Versionar `guilds.json`** — O arquivo `data/guilds.json` não está mais no .gitignore. Após configurar pelo `!sup`, faça:
-   ```bash
-   git add data/guilds.json
-   git commit -m "Config do bot"
-   git push
-   ```
+- `discloud.config` — configuração do bot
+- `run.py` — ponto de entrada
+- `requirements.txt` — dependências Python
+- `.discloudignore` — arquivos não enviados no deploy
 
-2. **Variável `DISCORD_DATA_DIR`** (opcional) — Se o Discloud oferecer volume persistente, defina no painel:
-   ```
-   DISCORD_DATA_DIR=/data
-   ```
-   E monte o volume em `/data`.
+---
 
-## Estrutura obrigatória do repositório
+## Como fazer o deploy
 
-O **root do repositório** deve conter estes arquivos/pastas no mesmo nível:
+### 1. Preparar o projeto
 
+1. Crie um arquivo `.env` local com seu token (para testes locais) — **não** envie esse arquivo no zip.
+2. Compacte a pasta `rustavlleybotteste1` em um arquivo `.zip`:
+   - Inclua: `run.py`, `main.py`, `config.py`, `discloud.config`, `requirements.txt`, pastas `cogs/`, `utils/`, `data/`.
+   - O `.discloudignore` exclui: `venv/`, `__pycache__/`, `.env`, `.git/`, etc.
+
+### 2. Entrar no Discord da Discloud
+
+1. Acesse: https://discord.discloudbot.com/
+2. Entre no servidor.
+3. Vá ao canal `#🔌・commands`.
+
+### 3. Fazer o deploy
+
+**Método avançado (com discloud.config):**
+
+1. Execute o comando `.upconfig`
+2. Envie o arquivo `.zip` quando solicitado
+3. O bot será implantado usando o `discloud.config`
+
+**Método rápido (sem discloud.config):**
+
+1. Execute o comando `.up`
+2. Informe:
+   - **RAM:** `300` (em MB)
+   - **Main file:** `run.py`
+   - **Application ID:** ID do seu bot no [Discord Developer Portal](https://discord.com/developers/applications)
+3. Envie o arquivo `.zip` quando solicitado
+
+---
+
+## Variáveis de ambiente (obrigatório)
+
+Configure no painel da Discloud (Dashboard → seu app → variáveis):
+
+| Variável        | Obrigatório | Descrição          |
+|-----------------|-------------|--------------------|
+| `DISCORD_TOKEN` | ✅ Sim      | Token do bot       |
+| `OPENAI_API_KEY`| Não         | Para a IA          |
+| `GROQ_API_KEY`  | Não         | Para a IA (Groq)   |
+
+> O `.env` é ignorado no deploy por segurança. Use sempre as variáveis do painel da Discloud.
+
+---
+
+## Configuração atual (discloud.config)
+
+```ini
+NAME=RustValleyBotTeste
+TYPE=bot
+MAIN=run.py
+RAM=300
+VERSION=latest
+BUILD=pip install -r requirements.txt
 ```
-├── run.py
-├── main.py
-├── config.py
-├── discloud.config
-├── requirements.txt
-├── utils/
-│   ├── __init__.py
-│   ├── key_expiry.py
-│   ├── storage.py
-│   └── ...
-├── cogs/
-└── ...
-```
 
-## Conferência no GitHub
+- **NAME:** nome do app na Discloud
+- **TYPE:** bot Discord
+- **MAIN:** arquivo de entrada
+- **RAM:** 300 MB (mínimo 100 MB para bots)
+- **VERSION:** Python latest
+- **BUILD:** instalação das dependências antes de iniciar
 
-1. O repositório conectado ao Discloud deve ter `rusvalleysuporte` como raiz.
-2. Verifique se a pasta `utils` está commitada:
-   ```bash
-   git status utils/
-   git add utils/
-   git commit -m "Incluir utils no deploy"
-   ```
+---
 
-## Variáveis de ambiente no Discloud
+## Dicas
 
-Configure no painel do app:
-- `DISCORD_TOKEN` — token do bot
-- `OPENAI_API_KEY` (opcional)
-- `GROQ_API_KEY` (opcional)
+1. **Dados persistentes:** O `data/guilds.json` fica no container. Para não perder configs, considere versioná-lo e incluir no zip.
+2. **AUTORESTART:** Disponível apenas no plano Platinum. Removido da config para funcionar em todos os planos.
+3. **Verificação de conta:** Se o sistema de verificação estiver indisponível, use a extensão do VS Code, o CLI ou o painel web da Discloud.
