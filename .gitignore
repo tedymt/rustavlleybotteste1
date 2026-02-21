@@ -1,0 +1,6 @@
+.env
+__pycache__/
+*.pyc
+# Mantém guilds.json versionado para preservar config entre deploys
+data/tickets.json
+transcripts/

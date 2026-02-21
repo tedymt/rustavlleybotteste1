@@ -1,0 +1,187 @@
+{
+  "1436162093152993404": {
+    "category_id": "1436176109883494491",
+    "logs_channel_id": "1458404986638696529",
+    "support_role_id": "1436176171632169020",
+    "title": "Central de Suporte / Support Center",
+    "description": "🇧🇷 Clique abaixo para abrir um ticket.\n🇺🇸 Click below to open a ticket.",
+    "color": "#5865F2",
+    "transcript_to_dm": true,
+    "departments": [],
+    "allowed_sup_users": [
+      "1064174714400030720"
+    ],
+    "servers": [
+      {
+        "id": "1",
+        "name": "EU 1",
+        "category_id": "1473421995889918285"
+      },
+      {
+        "id": "2",
+        "name": "BR 10X",
+        "category_id": "1473422030937264308"
+      }
+    ],
+    "panel_title_pt": "Central de Suporte",
+    "panel_title_en": "Support Center",
+    "panel_desc_pt": "🇧🇷 Clique no botão abaixo para abrir um ticket.\nNossa equipe irá atendê-lo em breve.",
+    "panel_desc_en": "🇺🇸 Click the button below to open a ticket.\nOur team will assist you shortly.",
+    "panel_banner": null,
+    "ticket_title_pt": "Atendimento Iniciado",
+    "ticket_title_en": "Support Started",
+    "ticket_desc_pt": "Olá! Nossa equipe foi notificada e irá atendê-lo em breve.",
+    "ticket_desc_en": "Hello! Our team has been notified and will assist you shortly.",
+    "ticket_banner": null,
+    "agent_enabled": true,
+    "agent_channels": [
+      "1436162181405212752",
+      "1436176377358581810"
+    ],
+    "agent_categories": [
+      "1436162094184665161"
+    ],
+    "agent_teachings": [],
+    "agent_in_tickets": true,
+    "agent_log_channel": "1436162144000544828",
+    "agent_training_channel": "1436176377358581810",
+    "agent_learned_data": [
+      {
+        "content": "Você é um tradutor especializado em inglês-português brasileiro, com foco em comunicação de servidores de jogos (especialmente Rust) e administração de comunidades gaming.\n\n\n\nSeu objetivo:\n\nFornecer traduções profissionais e naturais que soem autênticas em português brasileiro\n\nExplicar nuances culturais e linguísticas quando necessário\n\nOferecer múltiplas opções de texto (do mais formal ao mais casual)\n\nAdaptar o tom da mensagem conforme o contexto (suporte técnico, anotações, interação com jogadores)\n\n\n\nQuando traduzir:\n\nApresente pelo menos 2 opções de tradução (exemplo: \"Opção 1: Direta e Impactante\" e \"Opção 2: Amigável\")\n\nExplique POR QUE cada versão funciona (highlight termos-chave e suas implicações)\n\nDê dicas práticas de quando usar cada versão\n\nDestaque expressões idiomáticas e seus equivalentes em português\n\n\n\nContexto de uso:\n\nComunicação com jogadores de servidores internacionais\n\nMensagens de administração e suporte\n\nExplicação de regras e mecânicas de jogo\n\nRespostas a t",
+        "author_id": "1064174714400030720",
+        "created_at": "2026-02-17T02:48:53.798905"
+      },
+      {
+        "content": "Você é um tradutor especializado em inglês-português brasileiro, com foco em comunicação de servidores de jogos (especialmente Rust) e administração de comunidades gaming.\n\n\n\nSeu objetivo:\n\nFornecer traduções profissionais e naturais que soem autênticas em português brasileiro\n\nExplicar nuances culturais e linguísticas quando necessário\n\nOferecer múltiplas opções de texto (do mais formal ao mais casual)\n\nAdaptar o tom da mensagem conforme o contexto (suporte técnico, anotações, interação com jogadores)\n\n\n\nQuando traduzir:\n\nApresente pelo menos 2 opções de tradução (exemplo: \"Opção 1: Direta e Impactante\" e \"Opção 2: Amigável\")\n\nExplique POR QUE cada versão funciona (highlight termos-chave e suas implicações)\n\nDê dicas práticas de quando usar cada versão\n\nDestaque expressões idiomáticas e seus equivalentes em português\n\n\n\nContexto de uso:\n\nComunicação com jogadores de servidores internacionais\n\nMensagens de administração e suporte\n\nExplicação de regras e mecânicas de jogo\n\nRespostas a t",
+        "author_id": "1064174714400030720",
+        "created_at": "2026-02-17T02:56:23.836092"
+      },
+      {
+        "content": "alguem consegue me ajudar ?",
+        "author_id": "1064174714400030720",
+        "created_at": "2026-02-17T03:29:58.664923"
+      },
+      {
+        "content": "ola alguem consegue me ajudar ?",
+        "author_id": "1064174714400030720",
+        "created_at": "2026-02-17T03:39:19.756167"
+      },
+      {
+        "content": "qual alguém tiver uma duvida sobre o servidor informe  ele que tem tutorial no canto superior esquerdo do jogo  ensinando tudo ou enviei essse video https://www.youtube.com/watch?v=1N5OoGtRkm8",
+        "author_id": "1064174714400030720",
+        "created_at": "2026-02-17T03:53:50.379200"
+      }
+    ],
+    "ticket_translation_enabled": true,
+    "agent_instructions": "Você é uma agente de IA do servidor Rust Valley. Cuide do servidor como administradora global.\nQuando um jogador falar no chat, identifique se está conversando normalmente ou com dúvidas.\nSe tiver dúvidas, responda se souber resolver. Se precisar de ajuda da equipe, oriente a abrir ticket e mencione o canal de tickets.\nUse <#ID> para mencionar canais, <@ID> para jogadores, <@&ID> para cargos. \n\nqual alguém tiver uma duvida sobre o servidor informe  ele que tem tutorial no canto superior esquerdo do jogo  ensinando tudo ou enviei essse video https://www.youtube.com/watch?v=1N5OoGtRkm8",
+    "agent_ai_enabled": true,
+    "agent_ticket_channel": "1436176377358581810",
+    "bot_log_channel_id": "1452110008920576100",
+    "doubt_use_ai_validation": true,
+    "transcript_channel_id": "1452110008920576100",
+    "ticket_close_delay_seconds": 5,
+    "ticket_unanswered_alert_minutes": 240,
+    "ticket_staff_reminder_minutes": 60,
+    "ticket_author_inactivity_close_minutes": 480
+  },
+  "123": {
+    "category_id": null,
+    "logs_channel_id": null,
+    "support_role_id": null,
+    "title": "Central de Suporte / Support Center",
+    "description": "🇧🇷 Clique abaixo para abrir um ticket.\n🇺🇸 Click below to open a ticket.",
+    "color": "#5865F2",
+    "transcript_to_dm": false,
+    "departments": [],
+    "allowed_sup_users": [],
+    "servers": [],
+    "panel_title_pt": "Central de Suporte",
+    "panel_title_en": "Support Center",
+    "panel_desc_pt": "🇧🇷 Clique no botão abaixo para abrir um ticket.\nNossa equipe irá atendê-lo em breve.",
+    "panel_desc_en": "🇺🇸 Click the button below to open a ticket.\nOur team will assist you shortly.",
+    "panel_banner": null,
+    "ticket_title_pt": "Atendimento Iniciado",
+    "ticket_title_en": "Support Started",
+    "ticket_desc_pt": "Olá! Nossa equipe foi notificada e irá atendê-lo em breve.",
+    "ticket_desc_en": "Hello! Our team has been notified and will assist you shortly.",
+    "ticket_banner": null,
+    "agent_enabled": false,
+    "agent_channels": [],
+    "agent_categories": [],
+    "agent_teachings": [],
+    "agent_in_tickets": false,
+    "agent_log_channel": null,
+    "agent_training_channel": null,
+    "agent_learned_data": [],
+    "ticket_translation_enabled": false,
+    "agent_instructions": "",
+    "agent_ai_enabled": false
+  },
+  "1340193447360987156": {
+    "category_id": "1391153656174215229",
+    "logs_channel_id": "1391180408766333072",
+    "transcript_channel_id": "1374066384006414568",
+    "support_role_id": "1445864288190333111",
+    "title": "Central de Suporte / Support Center",
+    "description": "🇧🇷 Clique abaixo para abrir um ticket.\n🇺🇸 Click below to open a ticket.",
+    "color": "#5865F2",
+    "transcript_to_dm": false,
+    "departments": [],
+    "allowed_sup_users": [],
+    "servers": [
+      {
+        "id": "1",
+        "name": "EU 10X PVE #1",
+        "category_id": "1473698994990485546"
+      },
+      {
+        "id": "2",
+        "name": "EU 10X PVE #2",
+        "category_id": "1473699043875225702"
+      },
+      {
+        "id": "3",
+        "name": "US 10X PVE #1",
+        "category_id": "1473699107947151440"
+      },
+      {
+        "id": "4",
+        "name": "US 10X PVE #2",
+        "category_id": "1473699129719914506"
+      },
+      {
+        "id": "5",
+        "name": "US 2X PVE",
+        "category_id": "1473699171969007627"
+      }
+    ],
+    "panel_title_pt": "Central de Suporte",
+    "panel_title_en": "🎫 Support & Ticket System",
+    "panel_desc_pt": "🇧🇷 Clique no botão abaixo para abrir um ticket.\nNossa equipe irá atendê-lo em breve.",
+    "panel_desc_en": "Need help? Our ticket system was designed to provide organized, fast, and efficient support.\n\nWhen you open a ticket:\n• Our staff is automatically notified  \n• Support is handled in a private and secure channel  \n• Tickets with no player response for 8 hours will be automatically closed  \n• Fully optimized system for better performance  \n\nAutomatic translation ensures support for BR, US, and EU players.\n\nClick the button below to open a ticket and contact our support team.",
+    "panel_banner": "https://media.discordapp.net/attachments/1468943331718594602/1468943407866183711/rustvalley.webp?ex=6996ff28&is=6995ada8&hm=62bcbe7c610258f8496907fbd0aea0266f3d72540c5dc70047836e83e1a059b6&=&format=webp",
+    "ticket_title_pt": "Atendimento Iniciado",
+    "ticket_title_en": "Support Started",
+    "ticket_desc_pt": "Olá! Nossa equipe foi notificada e irá atendê-lo em breve.",
+    "ticket_desc_en": "Hello! Our team has been notified and will assist you shortly.",
+    "ticket_banner": null,
+    "agent_enabled": false,
+    "agent_channels": [],
+    "agent_categories": [],
+    "agent_teachings": [],
+    "agent_in_tickets": false,
+    "agent_log_channel": null,
+    "agent_training_channel": null,
+    "agent_learned_data": [],
+    "ticket_translation_enabled": false,
+    "agent_instructions": "",
+    "agent_ai_enabled": true,
+    "agent_ticket_channel": null,
+    "bot_log_channel_id": null,
+    "doubt_use_ai_validation": true,
+    "ticket_close_delay_seconds": 5,
+    "ticket_unanswered_alert_minutes": 240,
+    "ticket_staff_reminder_minutes": 60,
+    "ticket_author_inactivity_close_minutes": 480
+  }
+}

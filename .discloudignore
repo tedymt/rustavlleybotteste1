@@ -1,0 +1,10 @@
+# Não incluir no deploy - a pasta utils DEVE ser incluída
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.env
+.cache/
+*.md
+node_modules/
