@@ -237,27 +237,32 @@ class TicketView(StaffTicketView):
         except discord.Forbidden:
             pass
 
-        # Desabilita botão de assumir e mantém Fechar + Notificar + Transferir + Traduções + Alterar idioma
-        new_view = StaffTicketView(self.bot)
-        close_btn = discord.ui.Button(label="Fechar / Close", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="sv_close_ticket")
-        close_btn.callback = _close_ticket_button_callback
-        new_view.add_item(close_btn)
-        notify_btn = discord.ui.Button(label="Notificar no privado", style=discord.ButtonStyle.secondary, emoji="📩", custom_id="sv_notify_dm", row=0)
-        notify_btn.callback = _notify_dm_button_callback
-        new_view.add_item(notify_btn)
-        transfer_btn = discord.ui.Button(label="Transferir", style=discord.ButtonStyle.secondary, emoji="↩️", custom_id="sv_transfer_ticket", row=0)
-        transfer_btn.callback = _transfer_ticket_button_callback
-        new_view.add_item(transfer_btn)
-        trans_btn = discord.ui.Button(label="Traduções", style=discord.ButtonStyle.secondary, emoji="🌐", custom_id="sv_translations", row=0)
-        trans_btn.callback = _translations_button_callback
-        new_view.add_item(trans_btn)
-        chlang_btn = discord.ui.Button(label="Alterar idioma", style=discord.ButtonStyle.secondary, emoji="🔤", custom_id="sv_change_lang", row=1)
-        chlang_btn.callback = _change_lang_button_callback
-        new_view.add_item(chlang_btn)
-        new_view.add_item(
-            discord.ui.Button(label=f"Staff: {staff.name}", style=discord.ButtonStyle.success, emoji="✅", custom_id="sv_claimed", disabled=True)
-        )
+        new_view = _build_claimed_view(self.bot, staff)
         await interaction.message.edit(view=new_view)
+
+
+def _build_claimed_view(bot, staff_member: discord.Member) -> discord.ui.View:
+    """View com botão Assumir desabilitado (Staff: nome) — usada após claim ou quando staff envia mensagem."""
+    view = StaffTicketView(bot)
+    close_btn = discord.ui.Button(label="Fechar / Close", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="sv_close_ticket")
+    close_btn.callback = _close_ticket_button_callback
+    view.add_item(close_btn)
+    notify_btn = discord.ui.Button(label="Notificar no privado", style=discord.ButtonStyle.secondary, emoji="📩", custom_id="sv_notify_dm", row=0)
+    notify_btn.callback = _notify_dm_button_callback
+    view.add_item(notify_btn)
+    transfer_btn = discord.ui.Button(label="Transferir", style=discord.ButtonStyle.secondary, emoji="↩️", custom_id="sv_transfer_ticket", row=0)
+    transfer_btn.callback = _transfer_ticket_button_callback
+    view.add_item(transfer_btn)
+    trans_btn = discord.ui.Button(label="Traduções", style=discord.ButtonStyle.secondary, emoji="🌐", custom_id="sv_translations", row=0)
+    trans_btn.callback = _translations_button_callback
+    view.add_item(trans_btn)
+    chlang_btn = discord.ui.Button(label="Alterar idioma", style=discord.ButtonStyle.secondary, emoji="🔤", custom_id="sv_change_lang", row=1)
+    chlang_btn.callback = _change_lang_button_callback
+    view.add_item(chlang_btn)
+    view.add_item(
+        discord.ui.Button(label=f"Staff: {staff_member.name}", style=discord.ButtonStyle.success, emoji="✅", custom_id="sv_claimed", disabled=True)
+    )
+    return view
 
 
 def _get_category_for_lang(config: dict, lang: str) -> str | None:
@@ -815,10 +820,8 @@ class TicketCog(commands.Cog):
                 ))
             return
 
-        # Staff
-        is_staff = member.guild_permissions.administrator or (
-            support_role_id and member.get_role(int(support_role_id))
-        )
+        # Staff (mesmo critério do botão Assumir)
+        is_staff = _is_staff(member, config)
         if is_staff:
             now_iso = datetime.utcnow().isoformat()
             updates = {"last_staff_message_at": now_iso, "staff_id": str(member.id)}
@@ -843,6 +846,14 @@ class TicketCog(commands.Cog):
                         say_map = dict(list(say_map.items())[-200:])
                     update_ticket(str(message.channel.id), {"say_msg_staff": say_map})
                 except Exception:
+                    pass
+            ticket_msg_id = ticket.get("ticket_message_id")
+            if ticket_msg_id:
+                try:
+                    ticket_msg = await message.channel.fetch_message(int(ticket_msg_id))
+                    new_view = _build_claimed_view(self.bot, member)
+                    await ticket_msg.edit(view=new_view)
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
                     pass
             return
 
@@ -1003,7 +1014,8 @@ class TicketCog(commands.Cog):
 
         view = TicketView(self.bot)
         content = f"<@&{support_role_id}>" if support_role_id else None
-        await ticket_channel.send(content=content, embed=embed, view=view)
+        ticket_msg = await ticket_channel.send(content=content, embed=embed, view=view)
+        update_ticket(str(ticket_channel.id), {"ticket_message_id": ticket_msg.id})
 
         # Painel staff: embed fixo (título/desc no idioma do jogador)
         staff_panel_embed = discord.Embed(
@@ -1215,25 +1227,7 @@ class TicketCog(commands.Cog):
             await channel.send(msg_channel)
         try:
             ticket_msg = await channel.fetch_message(ticket_message_id)
-            new_view = StaffTicketView(self.bot)
-            close_btn = discord.ui.Button(label="Fechar / Close", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="sv_close_ticket")
-            close_btn.callback = _close_ticket_button_callback
-            new_view.add_item(close_btn)
-            notify_btn = discord.ui.Button(label="Notificar no privado", style=discord.ButtonStyle.secondary, emoji="📩", custom_id="sv_notify_dm", row=0)
-            notify_btn.callback = _notify_dm_button_callback
-            new_view.add_item(notify_btn)
-            transfer_btn = discord.ui.Button(label="Transferir", style=discord.ButtonStyle.secondary, emoji="↩️", custom_id="sv_transfer_ticket", row=0)
-            transfer_btn.callback = _transfer_ticket_button_callback
-            new_view.add_item(transfer_btn)
-            trans_btn = discord.ui.Button(label="Traduções", style=discord.ButtonStyle.secondary, emoji="🌐", custom_id="sv_translations", row=0)
-            trans_btn.callback = _translations_button_callback
-            new_view.add_item(trans_btn)
-            chlang_btn = discord.ui.Button(label="Alterar idioma", style=discord.ButtonStyle.secondary, emoji="🔤", custom_id="sv_change_lang", row=1)
-            chlang_btn.callback = _change_lang_button_callback
-            new_view.add_item(chlang_btn)
-            new_view.add_item(
-                discord.ui.Button(label=f"Staff: {new_staff.name}", style=discord.ButtonStyle.success, emoji="✅", custom_id="sv_claimed", disabled=True)
-            )
+            new_view = _build_claimed_view(self.bot, new_staff)
             await ticket_msg.edit(view=new_view)
         except (discord.NotFound, discord.Forbidden):
             pass
