@@ -499,9 +499,6 @@ class TicketCog(commands.Cog):
             ticket_updated, messages_for_transcript, guild_name,
             author_lang=author_lang,
         )
-        summary_filename = f"resumo_ticket_{code}.txt"
-        summary_bytes = summary_content.encode("utf-8")
-        summary_file = discord.File(fp=io.BytesIO(summary_bytes), filename=summary_filename)
         if author:
             try:
                 if auto_close and inactivity_reason:
@@ -519,7 +516,33 @@ class TicketCog(commands.Cog):
                         emoji="🎫",
                     )
                 )
-                await author.send(dm_text, file=summary_file, view=dm_view)
+                embeds_dm = []
+                _desc_limit = 4000
+                lines = summary_content.split("\n")
+                parts = []
+                current = []
+                size = 0
+                for line in lines:
+                    line_len = len(line) + 1
+                    if size + line_len > _desc_limit and current:
+                        parts.append("\n".join(current))
+                        current = []
+                        size = 0
+                    current.append(line)
+                    size += line_len
+                if current:
+                    parts.append("\n".join(current))
+                for i, part in enumerate(parts):
+                    title = f"📋 RESUMO TICKET #{code}" if i == 0 else f"📋 RESUMO TICKET #{code} (cont.)"
+                    embeds_dm.append(
+                        discord.Embed(
+                            title=title,
+                            description=part,
+                            color=color_from_hex(config.get("color", "#5865F2")),
+                            timestamp=datetime.utcnow(),
+                        )
+                    )
+                await author.send(dm_text, embeds=embeds_dm[:10], view=dm_view)
             except discord.Forbidden:
                 pass
 
@@ -757,13 +780,13 @@ class TicketCog(commands.Cog):
                                     inactivity_reason = (
                                         f"⏱️ **This ticket was closed automatically** on **{guild.name}** due to no response from you for over {author_inactivity_min} minutes after the support team's last message.\n\n"
                                         f"**Protocol:** `{ticket_fresh.get('ticket_code', 'N/A')}`\n\n"
-                                        "📄 **Ticket summary attached.**"
+                                        "📄 **Ticket summary below.**"
                                     )
                                 else:
                                     inactivity_reason = (
                                         f"⏱️ **Este ticket foi fechado automaticamente** em **{guild.name}** por não haver resposta sua por mais de {author_inactivity_min} minutos após a última mensagem da equipe.\n\n"
                                         f"**Protocolo:** `{ticket_fresh.get('ticket_code', 'N/A')}`\n\n"
-                                        "📄 **Resumo do ticket em anexo.**"
+                                        "📄 **Resumo do ticket abaixo.**"
                                     )
                                 # Usa o mesmo fluxo de fechamento (com delay 0) para aproveitar fetch_channel e logs
                                 asyncio.create_task(self._close_ticket_after_delay(
