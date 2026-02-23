@@ -88,6 +88,7 @@ TICKET_UI = {
         "maintenance_close_dm": "🔧 **Este ticket foi fechado automaticamente para manutenção.**\n\nSe o problema não foi resolvido, abra outro ticket quando retornarmos.\n\n**Protocolo:** `{code}`",
         "chat_closed_lock": "🔒 **Chat fechado pela staff para evitar brigas e discussões entre jogadores.**",
         "chat_unlock_btn": "Desbloquear chat",
+        "chat_opened_lock": "✅ **Chat liberado pela staff.**",
     },
     "en": {
         "ticket_title": "Support Started",
@@ -137,6 +138,7 @@ TICKET_UI = {
         "maintenance_block": "⚠️ The bot is undergoing maintenance and we will return shortly.",
         "maintenance_close_dm": "🔧 **This ticket was closed automatically for maintenance.**\n\nIf the issue was not resolved, please open another ticket when we return.\n\n**Protocol:** `{code}`",
         "chat_closed_lock": "🔒 **Chat closed by staff to prevent fights and arguments between players.**",
+        "chat_opened_lock": "✅ **Chat opened by staff.**",
         "chat_unlock_btn": "Unlock chat",
     },
     "es": {

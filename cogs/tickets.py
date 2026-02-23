@@ -427,6 +427,21 @@ class UnlockChatView(discord.ui.View):
         except discord.Forbidden:
             return await interaction.response.send_message("❌ Sem permissão para desbloquear.", ephemeral=True)
         await interaction.response.send_message("✅ Chat desbloqueado.", ephemeral=True)
+        try:
+            await interaction.message.delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+        notify = await channel.send(
+            f"{t('chat_opened_lock', 'pt')}\n{t('chat_opened_lock', 'en')}"
+        )
+        asyncio.create_task(self._delete_notify_after(notify, 60))
+
+    async def _delete_notify_after(self, msg: discord.Message, seconds: int):
+        try:
+            await asyncio.sleep(seconds)
+            await msg.delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
 
 
 class TicketCog(commands.Cog):
@@ -918,15 +933,15 @@ class TicketCog(commands.Cog):
             return None
 
     @commands.command(name="fechar", aliases=["lock", "trancar"])
-    async def fechar_command(self, ctx: commands.Context, duracao: str = "20"):
-        """Fecha o chat por um tempo. Uso: !fechar 20 (20 min) | !fechar 1d (24h) | !fechar 2h (2h)."""
+    async def fechar_command(self, ctx: commands.Context, duracao: str = "30"):
+        """Fecha o chat por um tempo. Uso: !fechar (30 min padrão) | !fechar 20 | !fechar 1d."""
         if not can_use_sup(str(ctx.author.id), str(ctx.guild.id)):
             return await ctx.send("❌ Sem permissão.", delete_after=5)
         if not isinstance(ctx.channel, discord.TextChannel):
             return await ctx.send("❌ Use em um canal de texto.", delete_after=5)
         seconds = self._parse_lock_duration(duracao)
         if seconds is None or seconds < 60:
-            return await ctx.send("❌ Duração inválida. Ex: `!fechar 20` (20 min) ou `!fechar 1d` (24h)", delete_after=8)
+            return await ctx.send("❌ Duração inválida. Ex: `!fechar` (30 min) ou `!fechar 1d` (24h)", delete_after=8)
         if seconds > 7 * 86400:
             return await ctx.send("❌ Máximo 7 dias (7d).", delete_after=5)
         try:
@@ -935,6 +950,17 @@ class TicketCog(commands.Cog):
             pass
         channel = ctx.channel
         guild = ctx.guild
+
+        cutoff = datetime.utcnow() - timedelta(minutes=30)
+        async for msg in channel.history(limit=200, oldest_first=False):
+            if msg.created_at.replace(tzinfo=None) <= cutoff:
+                break
+            try:
+                await msg.delete()
+                await asyncio.sleep(0.55)
+            except (discord.Forbidden, discord.HTTPException):
+                break
+
         try:
             await channel.set_permissions(guild.default_role, send_messages=False, reason="!fechar")
         except discord.Forbidden:
@@ -942,19 +968,34 @@ class TicketCog(commands.Cog):
         msg_pt = t("chat_closed_lock", "pt")
         msg_en = t("chat_closed_lock", "en")
         view = UnlockChatView(self.bot)
-        await channel.send(f"{msg_pt}\n{msg_en}", view=view)
-        asyncio.create_task(self._unlock_channel_after(channel.id, guild.id, seconds))
+        lock_msg = await channel.send(f"{msg_pt}\n{msg_en}", view=view)
+        asyncio.create_task(self._unlock_channel_after(channel.id, guild.id, seconds, lock_msg.id))
 
-    async def _unlock_channel_after(self, channel_id: int, guild_id: int, seconds: int):
-        """Desbloqueia o canal após o delay."""
+    async def _unlock_channel_after(self, channel_id: int, guild_id: int, seconds: int, lock_msg_id: int | None = None):
+        """Desbloqueia o canal após o delay, remove a mensagem do bot e envia aviso temporário."""
         try:
             await asyncio.sleep(seconds)
             guild = self.bot.get_guild(guild_id)
             if not guild:
                 return
             channel = guild.get_channel(channel_id)
-            if channel and isinstance(channel, discord.TextChannel):
-                await channel.set_permissions(guild.default_role, overwrite=None, reason="!fechar (auto-unlock)")
+            if not channel or not isinstance(channel, discord.TextChannel):
+                return
+            await channel.set_permissions(guild.default_role, overwrite=None, reason="!fechar (auto-unlock)")
+            if lock_msg_id:
+                try:
+                    msg = await channel.fetch_message(lock_msg_id)
+                    await msg.delete()
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass
+            notify = await channel.send(
+                f"{t('chat_opened_lock', 'pt')}\n{t('chat_opened_lock', 'en')}"
+            )
+            await asyncio.sleep(60)
+            try:
+                await notify.delete()
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                pass
         except Exception as e:
             print(f"[Ticket] Erro ao desbloquear canal {channel_id}: {e}")
 
