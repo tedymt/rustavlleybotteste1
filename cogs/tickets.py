@@ -1612,6 +1612,7 @@ class SupMainView(discord.ui.View):
             discord.SelectOption(label="Agente", value="agent", emoji="🤖", description="Supervisão, treino e ações"),
             discord.SelectOption(label="Logs", value="logs", emoji="📋", description="Canal de status do bot (startup)"),
             discord.SelectOption(label="⏱️ Tempos de ticket", value="timers", emoji="⏱️", description="Delay fechamento, alertas e auto-fechar"),
+            discord.SelectOption(label="RustServer", value="rustserver_wipe", emoji="🗓️", description="Wipe — datas, countdown e RCON"),
         ],
         row=0,
     )
@@ -1645,6 +1646,15 @@ class SupMainView(discord.ui.View):
         elif value == "timers":
             modal = TicketTimersModal(self.guild_id)
             await interaction.response.send_modal(modal)
+        elif value == "rustserver_wipe":
+            from cogs.wipe import WipeConfigView
+            cog = interaction.client.get_cog("WipeCog")
+            if cog:
+                embed = cog._build_wipe_embed(self.guild_id)
+                view = WipeConfigView(self.bot, self.guild_id, cog._build_wipe_embed)
+                await interaction.response.edit_message(embed=embed, view=view)
+            else:
+                await interaction.response.send_message("❌ Módulo de Wipe não carregado.", ephemeral=True)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not can_use_sup(str(interaction.user.id), self.guild_id):

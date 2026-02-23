@@ -50,6 +50,12 @@ def main():
             except Exception as e:
                 errors.append(f"Cog Agent: {e}")
                 print(f"[ERRO] Falha ao carregar agent: {e}")
+        if "cogs.wipe" not in bot.extensions:
+            try:
+                await bot.load_extension("cogs.wipe")
+            except Exception as e:
+                errors.append(f"Cog Wipe: {e}")
+                print(f"[ERRO] Falha ao carregar wipe: {e}")
         try:
             await bot.tree.sync()
         except Exception as e:
@@ -104,7 +110,7 @@ def main():
                 cfg = get_guild_config(str(guild.id))
                 status_lines = [
                     f"**Bot:** {bot.user} conectado",
-                    f"**Cogs:** Tickets {'✅' if 'TicketCog' in str(bot.cogs) else '❌'}, Agent {'✅' if 'AgentCog' in str(bot.cogs) else '❌'}",
+                    f"**Cogs:** Tickets {'✅' if 'TicketCog' in str(bot.cogs) else '❌'}, Agent {'✅' if 'AgentCog' in str(bot.cogs) else '❌'}, Wipe {'✅' if 'WipeCog' in str(bot.cogs) else '❌'}",
                     f"**Servidores:** {len(bot.guilds)}",
                 ]
                 config_lines = [
