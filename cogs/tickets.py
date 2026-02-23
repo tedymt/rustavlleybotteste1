@@ -272,6 +272,20 @@ def _get_category_for_lang(config: dict, lang: str) -> str | None:
     return config.get("category_id_pt") or config.get("category_id")
 
 
+def _detect_panel_lang_from_channel(channel: discord.abc.GuildChannel | None, config: dict) -> str:
+    """Detecta o idioma do painel pela categoria do canal. Retorna 'en' ou 'pt'."""
+    if not channel or not getattr(channel, "category_id", None):
+        return "pt"
+    cat_id = str(channel.category_id)
+    cat_en = config.get("category_id_en")
+    cat_pt = config.get("category_id_pt")
+    if cat_en and cat_id == str(cat_en):
+        return "en"
+    if cat_pt and cat_id == str(cat_pt):
+        return "pt"
+    return "pt"
+
+
 def can_use_sup(user_id: str, guild_id: str) -> bool:
     """Verifica se o usuário pode usar !sup (dono ou autorizado)."""
     if str(user_id) == BOT_OWNER_ID:
@@ -976,10 +990,12 @@ class TicketCog(commands.Cog):
         guild = interaction.guild
         user = interaction.user
         config = get_guild_config(str(guild.id))
+        if config.get("category_id_en") or config.get("category_id_pt"):
+            lang = _detect_panel_lang_from_channel(interaction.channel, config)
         lang = lang or "pt"
 
         if config.get("maintenance_mode"):
-            msg = t("maintenance_block", "en" if lang == "en" else "pt")
+            msg = t("maintenance_block", lang)
             return await interaction.response.send_message(msg, ephemeral=True)
 
         open_tickets = get_open_tickets(str(guild.id))
