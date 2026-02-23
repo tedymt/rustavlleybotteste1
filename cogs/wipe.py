@@ -170,10 +170,36 @@ class WipeRconModal(discord.ui.Modal, title="Adicionar servidor RCON"):
     def __init__(self, guild_id: str):
         super().__init__(timeout=120)
         self.guild_id = guild_id
-        self.add_item(discord.ui.TextInput(label="Host (IP ou domínio)", placeholder="Ex: play.rustvalley.com.br", required=True, max_length=100))
-        self.add_item(discord.ui.TextInput(label="Porta WebRcon", placeholder="Ex: 28016", required=True, max_length=5))
-        self.add_item(discord.ui.TextInput(label="Senha RCON", placeholder="Senha do webrcon", required=True, max_length=100))
-        self.add_item(discord.ui.TextInput(label="Nome (opcional)", placeholder="Ex: BR 10X", required=False, max_length=50))
+        cfg = get_wipe_config(guild_id)
+        draft = cfg.get("rcon_draft") or {}
+        self.add_item(discord.ui.TextInput(
+            label="Host (IP ou domínio)",
+            placeholder="Ex: play.rustvalley.com.br",
+            default=draft.get("host", ""),
+            required=True,
+            max_length=100,
+        ))
+        self.add_item(discord.ui.TextInput(
+            label="Porta WebRcon",
+            placeholder="Ex: 28016",
+            default=draft.get("port", ""),
+            required=True,
+            max_length=5,
+        ))
+        self.add_item(discord.ui.TextInput(
+            label="Senha RCON",
+            placeholder="Senha do webrcon",
+            default=draft.get("password", ""),
+            required=True,
+            max_length=100,
+        ))
+        self.add_item(discord.ui.TextInput(
+            label="Nome (opcional)",
+            placeholder="Ex: BR 10X",
+            default=draft.get("name", ""),
+            required=False,
+            max_length=50,
+        ))
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
@@ -185,6 +211,7 @@ class WipeRconModal(discord.ui.Modal, title="Adicionar servidor RCON"):
             servers = cfg.get("rcon_servers", [])
             servers.append({"host": host, "port": port, "password": password, "name": name})
             cfg["rcon_servers"] = servers[-20:]
+            cfg["rcon_draft"] = {"host": host, "port": str(port), "password": password, "name": name}
             save_wipe_config(self.guild_id, cfg)
             await interaction.response.send_message(f"✅ Servidor **{name}** adicionado. Use o botão 'Buscar info RCON' para identificar.", ephemeral=True)
         except ValueError:

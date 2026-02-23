@@ -32,6 +32,7 @@ def get_wipe_config(guild_id: str) -> dict:
         "wipe_embed_message_id": None,
         "banner_url": None,
         "rcon_servers": [],
+        "rcon_draft": {},
     }
     if guild_id not in data:
         data[guild_id] = defaults.copy()
