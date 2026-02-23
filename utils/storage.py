@@ -81,6 +81,7 @@ def get_guild_config(guild_id: str) -> dict:
         "ticket_unanswered_alert_minutes": 240,
         "ticket_staff_reminder_minutes": 60,
         "ticket_author_inactivity_close_minutes": 480,
+        "maintenance_mode": False,
     }
     if guild_id not in data:
         data[guild_id] = defaults.copy()

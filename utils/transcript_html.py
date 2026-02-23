@@ -4,6 +4,8 @@ import re
 from datetime import datetime
 from html import escape
 
+from utils.translator import t
+
 
 # Nome exibido para mensagens do bot que não são atribuídas a staff (ex: claim, transfer, close)
 _BOT_SYSTEM_LABEL = "Suporte Valley"
@@ -205,7 +207,8 @@ def build_transcript_summary(
             author_name = m.get("author_name", "?")
             break
 
-    lines = [f"RESUMO TICKET #{code} @{author_name}", ""]
+    header = t("summary_header", author_lang, code=code, name=author_name)
+    lines = [header, ""]
 
     _lang_map = {"en-GB": "en", "pt-PT": "pt"}
     lang = _lang_map.get(author_lang, author_lang) if author_lang in ("pt", "en", "en-GB", "pt-PT") else "pt"

@@ -505,17 +505,6 @@ class TicketCog(commands.Cog):
                     dm_text = inactivity_reason
                 else:
                     dm_text = f"✅ **{t('closed_dm', author_lang, guild=guild_name, code=code, duration=duration)}**"
-                channel_link = f"https://discord.com/channels/{guild.id}/{channel.id}"
-                dm_view = discord.ui.View()
-                dm_btn_label = t("open_ticket", author_lang)
-                dm_view.add_item(
-                    discord.ui.Button(
-                        label=dm_btn_label,
-                        style=discord.ButtonStyle.link,
-                        url=channel_link,
-                        emoji="🎫",
-                    )
-                )
                 embeds_dm = []
                 _desc_limit = 4000
                 lines = summary_content.split("\n")
@@ -532,8 +521,10 @@ class TicketCog(commands.Cog):
                     size += line_len
                 if current:
                     parts.append("\n".join(current))
+                summary_title = t("summary_title", author_lang, code=code)
+                summary_cont = t("summary_cont", author_lang, code=code)
                 for i, part in enumerate(parts):
-                    title = f"📋 RESUMO TICKET #{code}" if i == 0 else f"📋 RESUMO TICKET #{code} (cont.)"
+                    title = f"📋 {summary_title}" if i == 0 else f"📋 {summary_cont}"
                     embeds_dm.append(
                         discord.Embed(
                             title=title,
@@ -542,7 +533,7 @@ class TicketCog(commands.Cog):
                             timestamp=datetime.utcnow(),
                         )
                     )
-                await author.send(dm_text, embeds=embeds_dm[:10], view=dm_view)
+                await author.send(dm_text, embeds=embeds_dm[:10])
             except discord.Forbidden:
                 pass
 
@@ -587,6 +578,30 @@ class TicketCog(commands.Cog):
                 await log_channel.send(embed=embed)
 
         await channel.delete(reason="Ticket closed (auto)" if auto_close else "Ticket closed")
+
+    async def _enter_maintenance_mode(self, guild_id: str) -> int:
+        """Ativa modo manutenção, fecha todos os tickets abertos e retorna a quantidade fechada."""
+        config = get_guild_config(guild_id)
+        config["maintenance_mode"] = True
+        save_guild_config(guild_id, config)
+
+        open_tickets = get_open_tickets(guild_id)
+        for ticket in open_tickets:
+            channel_id = str(ticket.get("channel_id"))
+            code = ticket.get("ticket_code", "N/A")
+            author_lang = ticket.get("author_lang") or "en"
+            reason = t("maintenance_close_dm", author_lang, code=code)
+            update_ticket(channel_id, {"status": "CLOSING"})
+            asyncio.create_task(
+                self._close_ticket_after_delay(channel_id, guild_id, 0, auto_close=True, inactivity_reason=reason)
+            )
+        return len(open_tickets)
+
+    async def _exit_maintenance_mode(self, guild_id: str) -> None:
+        """Desativa modo manutenção."""
+        config = get_guild_config(guild_id)
+        config["maintenance_mode"] = False
+        save_guild_config(guild_id, config)
 
     @commands.command(name="tickettest")
     async def ticket_test_command(self, ctx: commands.Context, mode: str = "unanswered"):
@@ -962,6 +977,10 @@ class TicketCog(commands.Cog):
         user = interaction.user
         config = get_guild_config(str(guild.id))
         lang = lang or "pt"
+
+        if config.get("maintenance_mode"):
+            msg = t("maintenance_block", "en" if lang == "en" else "pt")
+            return await interaction.response.send_message(msg, ephemeral=True)
 
         open_tickets = get_open_tickets(str(guild.id))
         if any(str(t.get("author_id")) == str(user.id) for t in open_tickets):
@@ -1423,6 +1442,12 @@ class TicketCog(commands.Cog):
             value=f"<@&{support_role}>" if support_role else "`Não definido`",
             inline=True,
         )
+        maintenance = config.get("maintenance_mode", False)
+        embed.add_field(
+            name="🔧 Modo Manutenção",
+            value="⚠️ **ATIVO** — Tickets bloqueados" if maintenance else "✅ **Inativo**",
+            inline=False,
+        )
         embed.set_footer(text="Somente o dono pode alterar estas configurações")
 
         return embed
@@ -1486,13 +1511,70 @@ class SupMainView(discord.ui.View):
 
 
 class ConfigBotView(discord.ui.View):
-    """Config do bot: dono, usuários autorizados, cargo suporte."""
+    """Config do bot: dono, usuários autorizados, cargo suporte, modo manutenção."""
 
     def __init__(self, bot, guild_id: str, build_embed_func):
         super().__init__(timeout=300)
         self.bot = bot
         self.guild_id = guild_id
         self.build_embed = build_embed_func
+        config = get_guild_config(guild_id)
+        maintenance = config.get("maintenance_mode", False)
+        btn_maint_on = discord.ui.Button(
+            label="🔧 Entrar em Manutenção",
+            style=discord.ButtonStyle.danger,
+            custom_id="sv_maint_on",
+            row=3,
+            disabled=maintenance,
+        )
+        btn_maint_off = discord.ui.Button(
+            label="✅ Sair da Manutenção",
+            style=discord.ButtonStyle.success,
+            custom_id="sv_maint_off",
+            row=3,
+            disabled=not maintenance,
+        )
+        btn_maint_on.callback = self._maint_on_callback
+        btn_maint_off.callback = self._maint_off_callback
+        self.add_item(btn_maint_on)
+        self.add_item(btn_maint_off)
+
+    async def _maint_on_callback(self, interaction: discord.Interaction):
+        if not can_use_sup(str(interaction.user.id), self.guild_id):
+            return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+        cog = interaction.client.get_cog("TicketCog")
+        if not cog:
+            return await interaction.response.send_message("❌ Erro ao acessar módulo de tickets.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        count = await cog._enter_maintenance_mode(self.guild_id)
+        await interaction.followup.send(
+            f"✅ **Modo manutenção ativado.**\n{'📋 ' + str(count) + ' ticket(s) sendo fechado(s) automaticamente.' if count else 'Nenhum ticket aberto.'}",
+            ephemeral=True,
+        )
+        try:
+            await interaction.message.edit(
+                embed=self.build_embed(self.guild_id),
+                view=ConfigBotView(self.bot, self.guild_id, self.build_embed),
+            )
+        except discord.NotFound:
+            pass
+
+    async def _maint_off_callback(self, interaction: discord.Interaction):
+        if not can_use_sup(str(interaction.user.id), self.guild_id):
+            return await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+        cog = interaction.client.get_cog("TicketCog")
+        if not cog:
+            return await interaction.response.send_message("❌ Erro ao acessar módulo de tickets.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        await cog._exit_maintenance_mode(self.guild_id)
+        try:
+            await interaction.message.edit(
+                embed=self.build_embed(self.guild_id),
+                view=ConfigBotView(self.bot, self.guild_id, self.build_embed),
+            )
+        except discord.NotFound:
+            pass
+        await interaction.followup.send("✅ **Modo manutenção desativado.** Os jogadores podem abrir tickets novamente.", ephemeral=True)
 
     @discord.ui.select(
         cls=UserSelect,
