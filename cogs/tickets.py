@@ -33,7 +33,7 @@ from utils.storage import (
     remove_transcript_file,
     remove_closed_ticket_from_storage,
 )
-from utils.transcript_html import build_transcript_html
+from utils.transcript_html import build_transcript_html, build_transcript_summary
 from utils.panel_cache import get_last_panel_message_id, set_last_panel_message_id
 from utils.limits import MAX_ALLOWED_SUP_USERS, MAX_SERVERS, MAX_TRANSCRIPT_MESSAGES
 from utils.translator import (
@@ -455,6 +455,7 @@ class TicketCog(commands.Cog):
 
             author_id = str(msg.author.id)
             author_name = msg.author.display_name or str(msg.author)
+            is_bot_message = msg.author.bot
             staff_id = say_msg_staff.get(str(msg.id))
             if staff_id:
                 try:
@@ -470,6 +471,8 @@ class TicketCog(commands.Cog):
                 "content": content,
                 "translations": translations if raw_for_translate else {},
                 "timestamp": msg.created_at.isoformat(),
+                "is_bot_message": is_bot_message,
+                "is_staff_say": bool(staff_id),
             })
 
         closed_at = datetime.utcnow()
@@ -492,8 +495,13 @@ class TicketCog(commands.Cog):
 
         html_content = build_transcript_html(ticket_updated, messages_for_transcript, guild_name)
         html_filename = f"transcript_{code}.html"
-        html_bytes = html_content.encode("utf-8")
-        file_discord = discord.File(fp=io.BytesIO(html_bytes), filename=html_filename)
+        summary_content = build_transcript_summary(
+            ticket_updated, messages_for_transcript, guild_name,
+            author_lang=author_lang,
+        )
+        summary_filename = f"resumo_ticket_{code}.txt"
+        summary_bytes = summary_content.encode("utf-8")
+        summary_file = discord.File(fp=io.BytesIO(summary_bytes), filename=summary_filename)
         if author:
             try:
                 if auto_close and inactivity_reason:
@@ -511,7 +519,7 @@ class TicketCog(commands.Cog):
                         emoji="🎫",
                     )
                 )
-                await author.send(dm_text, file=file_discord, view=dm_view)
+                await author.send(dm_text, file=summary_file, view=dm_view)
             except discord.Forbidden:
                 pass
 
@@ -629,6 +637,26 @@ class TicketCog(commands.Cog):
         await self.bot.wait_until_ready()
         await self._run_ticket_checks_once()
 
+    async def _is_ticket_channel_still_open(self, guild: discord.Guild, channel_id: str, config: dict) -> bool:
+        """Verifica se o canal do ticket ainda existe e está na categoria de tickets (evita notificar tickets fechados/deletados)."""
+        try:
+            channel = await guild.fetch_channel(int(channel_id))
+        except (discord.NotFound, discord.HTTPException):
+            return False
+        if not isinstance(channel, discord.TextChannel):
+            return False
+        cat_ids = [
+            str(c) for c in [
+                config.get("category_id"),
+                config.get("category_id_pt"),
+                config.get("category_id_en"),
+            ]
+            if c
+        ]
+        if not cat_ids:
+            return True
+        return channel.category_id is not None and str(channel.category_id) in cat_ids
+
     async def _run_ticket_checks_once(self):
         """Verifica tickets abertos: alerta suporte sem resposta, lembrete para staff, auto-fechamento por inatividade."""
         for guild in self.bot.guilds:
@@ -655,7 +683,7 @@ class TicketCog(commands.Cog):
                     if mins_open >= unanswered_min:
                         alerted_at = _parse_iso(ticket.get("unanswered_alert_sent_at"))
                         if not alerted_at or (now - alerted_at).total_seconds() / 60 >= 60:
-                            if support_role_id:
+                            if await self._is_ticket_channel_still_open(guild, channel_id, config) and support_role_id:
                                 role = guild.get_role(int(support_role_id))
                                 if role:
                                     channel_link = f"https://discord.com/channels/{guild.id}/{channel_id}"
@@ -681,7 +709,7 @@ class TicketCog(commands.Cog):
                                             )
                                         except (discord.Forbidden, discord.HTTPException):
                                             pass
-                            update_ticket(channel_id, {"unanswered_alert_sent_at": now.isoformat()})
+                                    update_ticket(channel_id, {"unanswered_alert_sent_at": now.isoformat()})
 
                 # 2) Staff assumiu; última mensagem foi do jogador → lembrete a cada N min no privado do staff (sempre em PT-BR, com botão)
                 staff_id = ticket.get("staff_id")
@@ -690,28 +718,31 @@ class TicketCog(commands.Cog):
                     if mins_since_staff >= staff_reminder_min:
                         last_reminder = _parse_iso(ticket.get("last_staff_reminder_at"))
                         if not last_reminder or (now - last_reminder).total_seconds() / 60 >= staff_reminder_min:
-                            try:
-                                staff_member = await guild.fetch_member(int(staff_id))
-                                if staff_member and not staff_member.bot:
-                                    channel_link = f"https://discord.com/channels/{guild.id}/{channel_id}"
-                                    view = discord.ui.View()
-                                    view.add_item(
-                                        discord.ui.Button(
-                                            label="Abrir ticket",
-                                            style=discord.ButtonStyle.link,
-                                            url=channel_link,
-                                            emoji="🎫",
+                            if not await self._is_ticket_channel_still_open(guild, channel_id, config):
+                                pass  # Ticket fechado/deletado, não envia lembrete
+                            else:
+                                try:
+                                    staff_member = await guild.fetch_member(int(staff_id))
+                                    if staff_member and not staff_member.bot:
+                                        channel_link = f"https://discord.com/channels/{guild.id}/{channel_id}"
+                                        view = discord.ui.View()
+                                        view.add_item(
+                                            discord.ui.Button(
+                                                label="Abrir ticket",
+                                                style=discord.ButtonStyle.link,
+                                                url=channel_link,
+                                                emoji="🎫",
+                                            )
                                         )
-                                    )
-                                    # Sempre em PT-BR para staff/admin
-                                    await staff_member.send(
-                                        "⏰ **Lembrete:** Você tem um ticket aberto aguardando sua resposta.\n"
-                                        "A última mensagem foi do jogador.",
-                                        view=view,
-                                    )
-                                update_ticket(channel_id, {"last_staff_reminder_at": now.isoformat()})
-                            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                                pass
+                                        # Sempre em PT-BR para staff/admin
+                                        await staff_member.send(
+                                            "⏰ **Lembrete:** Você tem um ticket aberto aguardando sua resposta.\n"
+                                            "A última mensagem foi do jogador.",
+                                            view=view,
+                                        )
+                                    update_ticket(channel_id, {"last_staff_reminder_at": now.isoformat()})
+                                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                                    pass
 
                 # 3) Staff respondeu; jogador não respondeu há mais de N min → auto-fecha e notifica autor no privado
                 if not ticket.get("auto_close_disabled", False):
@@ -726,13 +757,13 @@ class TicketCog(commands.Cog):
                                     inactivity_reason = (
                                         f"⏱️ **This ticket was closed automatically** on **{guild.name}** due to no response from you for over {author_inactivity_min} minutes after the support team's last message.\n\n"
                                         f"**Protocol:** `{ticket_fresh.get('ticket_code', 'N/A')}`\n\n"
-                                        "📄 **Transcript copy attached** (HTML)."
+                                        "📄 **Ticket summary attached.**"
                                     )
                                 else:
                                     inactivity_reason = (
                                         f"⏱️ **Este ticket foi fechado automaticamente** em **{guild.name}** por não haver resposta sua por mais de {author_inactivity_min} minutos após a última mensagem da equipe.\n\n"
                                         f"**Protocolo:** `{ticket_fresh.get('ticket_code', 'N/A')}`\n\n"
-                                        "📄 **Cópia do transcript em anexo** (HTML)."
+                                        "📄 **Resumo do ticket em anexo.**"
                                     )
                                 # Usa o mesmo fluxo de fechamento (com delay 0) para aproveitar fetch_channel e logs
                                 asyncio.create_task(self._close_ticket_after_delay(

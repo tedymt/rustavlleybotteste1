@@ -1,7 +1,15 @@
-"""Gera transcript do ticket em HTML para download e arquivo (estilo bate-papo, idioma da categoria)."""
+"""Gera transcript do ticket em HTML para download e arquivo (estilo bate-papo, idioma da categoria).
+Também gera resumo em texto para envio no privado do jogador (identifica mensagens do bot/traduções)."""
 import re
 from datetime import datetime
 from html import escape
+
+
+# Nome exibido para mensagens do bot que não são atribuídas a staff (ex: claim, transfer, close)
+_BOT_SYSTEM_LABEL = "Suporte Valley"
+
+# Regex para extrair o texto real de mensagens "Suporte; Nome:** texto" (evita redundância no resumo)
+_SUPPORT_SAY_PATTERN = re.compile(r"^\*\*(?:Suporte|Support)[^:]*:\*\*\s*", re.IGNORECASE)
 
 
 # Textos da interface por idioma (categoria do ticket)
@@ -176,3 +184,63 @@ def build_transcript_html(ticket: dict, messages: list[dict], guild_name: str = 
 </body>
 </html>"""
     return html
+
+
+def build_transcript_summary(
+    ticket: dict,
+    messages: list[dict],
+    guild_name: str = "Servidor",
+    author_lang: str = "pt",
+) -> str:
+    """
+    Gera resumo em texto de tudo que foi falado no ticket para envio no privado do jogador.
+    Identifica mensagens enviadas pelo bot (traduções automáticas, sistema) e usa o idioma do autor.
+    Formato: [HH:MM DD/MM/YYYY] @Nome: mensagem
+    """
+    code = ticket.get("ticket_code", "N/A")
+    author_id = str(ticket.get("author_id", ""))
+    author_name = "?"
+    for m in messages:
+        if str(m.get("author_id")) == author_id:
+            author_name = m.get("author_name", "?")
+            break
+
+    lines = [f"RESUMO TICKET #{code} @{author_name}", ""]
+
+    _lang_map = {"en-GB": "en", "pt-PT": "pt"}
+    lang = _lang_map.get(author_lang, author_lang) if author_lang in ("pt", "en", "en-GB", "pt-PT") else "pt"
+    other_lang = "en" if lang == "pt" else "pt"
+
+    for m in messages:
+        ts = m.get("timestamp", "")
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            ts_str = dt.strftime("%H:%M %d/%m/%Y")
+        except Exception:
+            ts_str = ts[:16] if ts else "—"
+
+        display_name = m.get("author_name", "?")
+        if m.get("is_bot_message") and not m.get("is_staff_say"):
+            display_name = _BOT_SYSTEM_LABEL
+
+        raw_content = (m.get("content") or "").strip()
+        trans = m.get("translations") or {}
+        pt = (trans.get("pt") or "").strip()
+        en = (trans.get("en") or "").strip()
+
+        if lang == "en" and en:
+            content = en
+        elif lang == "pt" and pt:
+            content = pt
+        else:
+            content = raw_content
+
+        if m.get("is_staff_say") and content:
+            content = _SUPPORT_SAY_PATTERN.sub("", content).strip()
+
+        if not content:
+            content = "—"
+
+        lines.append(f"[{ts_str}] @{display_name}: {content}")
+
+    return "\n".join(lines)
