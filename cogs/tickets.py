@@ -399,6 +399,9 @@ class TransferSelectView(discord.ui.View):
         cog = interaction.client.get_cog("TicketCog")
         if cog:
             await cog._do_transfer_ticket(interaction, member, self.channel_id, self.ticket_message_id)
+        else:
+            msg = "❌ Ticket system unavailable." if self._lang == "en" else "❌ Sistema de tickets indisponível."
+            await interaction.response.send_message(msg, ephemeral=True)
 
 
 class UnlockChatView(discord.ui.View):
@@ -1415,7 +1418,7 @@ class TicketCog(commands.Cog):
         if not _is_staff(interaction.user, config):
             msg = "❌ Only support staff can transfer this ticket." if ticket.get("lang") == "en" else "❌ Apenas a equipe de suporte pode transferir o ticket."
             return await interaction.response.send_message(msg, ephemeral=True)
-        lang = ticket.get("lang", "pt")
+        author_lang = ticket.get("author_lang") or "pt"
         view = TransferSelectView(
             self.bot,
             str(interaction.guild.id),
@@ -1428,9 +1431,11 @@ class TicketCog(commands.Cog):
 
     async def _do_transfer_ticket(self, interaction: discord.Interaction, new_staff: discord.Member, channel_id: str, ticket_message_id: int):
         """Transfere o ticket para outro staff: atualiza staff_id, mensagem no canal e view."""
+        # Responde em até 3s; o resto pode demorar — defer e depois edit_original_response
+        await interaction.response.defer(ephemeral=True)
         ticket = get_ticket_by_channel(channel_id)
         if not ticket:
-            await interaction.response.send_message("❌ Ticket not found.", ephemeral=True)
+            await interaction.edit_original_response(content="❌ Ticket not found.")
             return
         author_id = ticket.get("author_id")
         update_ticket(channel_id, {"staff_id": str(new_staff.id)})
@@ -1441,29 +1446,31 @@ class TicketCog(commands.Cog):
         msg_ephemeral = f"✅ {t('transfer_dm_title', author_lang)} → **{new_staff.display_name}**"
         if channel:
             await channel.send(msg_channel)
-        try:
-            ticket_msg = await channel.fetch_message(ticket_message_id)
-            new_view = _build_claimed_view(self.bot, new_staff)
-            await ticket_msg.edit(view=new_view)
-        except (discord.NotFound, discord.Forbidden):
-            pass
-        try:
-            author = await self.bot.fetch_user(int(author_id))
-            channel_link = f"https://discord.com/channels/{interaction.guild.id}/{int(channel_id)}"
-            dm_text = t("transfer_dm_desc", author_lang, staff=new_staff.display_name)
-            dm_btn_label = t("open_ticket", author_lang)
-            dm_view = discord.ui.View()
-            dm_view.add_item(
-                discord.ui.Button(
-                    label=dm_btn_label,
-                    style=discord.ButtonStyle.link,
-                    url=channel_link,
-                    emoji="🎫",
+        if channel:
+            try:
+                ticket_msg = await channel.fetch_message(ticket_message_id)
+                new_view = _build_claimed_view(self.bot, new_staff)
+                await ticket_msg.edit(view=new_view)
+            except (discord.NotFound, discord.Forbidden):
+                pass
+        if author_id:
+            try:
+                author = await self.bot.fetch_user(int(author_id))
+                channel_link = f"https://discord.com/channels/{interaction.guild.id}/{int(channel_id)}"
+                dm_text = t("transfer_dm_desc", author_lang, staff=new_staff.display_name)
+                dm_btn_label = t("open_ticket", author_lang)
+                dm_view = discord.ui.View()
+                dm_view.add_item(
+                    discord.ui.Button(
+                        label=dm_btn_label,
+                        style=discord.ButtonStyle.link,
+                        url=channel_link,
+                        emoji="🎫",
+                    )
                 )
-            )
-            await author.send(dm_text, view=dm_view)
-        except (discord.Forbidden, discord.NotFound, ValueError):
-            pass
+                await author.send(dm_text, view=dm_view)
+            except (discord.Forbidden, discord.NotFound, ValueError):
+                pass
         # DM para o staff que recebeu a transferência (com link para o ticket) — sempre em PT-BR
         channel_link = f"https://discord.com/channels/{interaction.guild.id}/{int(channel_id)}"
         staff_dm_title = "📩 Ticket transferido para você"
@@ -1476,7 +1483,7 @@ class TicketCog(commands.Cog):
             await new_staff.send(embed=staff_embed, view=staff_view)
         except (discord.Forbidden, discord.NotFound):
             pass
-        await interaction.response.edit_message(content=msg_ephemeral, view=None)
+        await interaction.edit_original_response(content=msg_ephemeral, view=None)
 
     def _build_config_embed(self, guild_id: str) -> discord.Embed:
         """Constrói o embed de configuração."""
