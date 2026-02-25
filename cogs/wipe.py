@@ -153,6 +153,11 @@ class WipeConfigView(discord.ui.View):
             view=CountdownsPorSalaView(self.bot, self.guild_id, self.build_embed),
         )
 
+    @discord.ui.button(label="📢 Anúncio no chat (!wipe)", style=discord.ButtonStyle.secondary, row=3, custom_id="wipe_announce_menu")
+    async def announce_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = _build_wipe_announce_config_embed(self.guild_id)
+        await interaction.response.edit_message(embed=embed, view=WipeAnnounceConfigView(self.bot, self.guild_id, self.build_embed))
+
     @discord.ui.button(label="⬅️ Voltar", style=discord.ButtonStyle.secondary, row=4, custom_id="wipe_back")
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         from cogs.tickets import RustCategoryView, _rust_menu_embed
@@ -561,6 +566,13 @@ class WipeRconModal(discord.ui.Modal, title="Adicionar servidor RCON"):
             required=False,
             max_length=50,
         ))
+        self.add_item(discord.ui.TextInput(
+            label="URL Connect (opcional — botão no anúncio !wipe)",
+            placeholder="steam://connect/ip:porta ou https://...",
+            default=draft.get("connect_url", ""),
+            required=False,
+            max_length=500,
+        ))
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
@@ -568,11 +580,12 @@ class WipeRconModal(discord.ui.Modal, title="Adicionar servidor RCON"):
             port = int(self.children[1].value.strip())
             password = self.children[2].value.strip()
             name = (self.children[3].value or "").strip() or host
+            connect_url = (self.children[4].value or "").strip() or None
             cfg = get_wipe_config(self.guild_id)
             servers = cfg.get("rcon_servers", [])
-            servers.append({"host": host, "port": port, "password": password, "name": name})
+            servers.append({"host": host, "port": port, "password": password, "name": name, "connect_url": connect_url})
             cfg["rcon_servers"] = servers[-20:]
-            cfg["rcon_draft"] = {"host": host, "port": str(port), "password": password, "name": name}
+            cfg["rcon_draft"] = {"host": host, "port": str(port), "password": password, "name": name, "connect_url": connect_url or ""}
             save_wipe_config(self.guild_id, cfg)
             await interaction.response.send_message(
                 f"✅ Servidor **{name}** adicionado. Verificando conexão e enviando log no canal de RCON...",
@@ -606,6 +619,209 @@ class WipeBannerModal(discord.ui.Modal, title="Banner do wipe"):
         await interaction.response.send_message(f"✅ Banner {'definido' if url else 'removido'}.", ephemeral=True)
 
 
+# Textos da embed de anúncio por idioma (pré-definidos)
+_WIPE_ANNOUNCE_LABELS = {
+    "pt": {"map": "🗺️ Mapa", "aviso": "📝 Aviso de atualização", "loja": "🛒 Loja", "connect": "🔗 Connect"},
+    "en": {"map": "🗺️ Map", "aviso": "📝 Update notice", "loja": "🛒 Store", "connect": "🔗 Connect"},
+}
+
+
+def _build_wipe_announce_config_embed(guild_id: str) -> discord.Embed:
+    """Embed de configuração do anúncio (!wipe) — usada no menu !sup → Rust → Wipe."""
+    cfg = get_wipe_config(guild_id)
+    gcfg = get_guild_config(guild_id)
+    color = color_from_hex(gcfg.get("color", "#5865F2"))
+    embed = discord.Embed(
+        title="📢 Anúncio de Wipe no Chat (!wipe)",
+        description="Configure aqui. Depois use o comando **!wipe** e escolha o idioma (PT-BR ou US) para enviar em cada servidor. Nome do servidor = RCON automático.",
+        color=color,
+        timestamp=datetime.utcnow(),
+    )
+    ch_pt = cfg.get("wipe_announce_channel_pt") or cfg.get("wipe_announce_channel_id")
+    ch_us = cfg.get("wipe_announce_channel_us")
+    embed.add_field(name="📢 Canal PT-BR", value=f"<#{ch_pt}>" if ch_pt else "`Não definido`", inline=True)
+    embed.add_field(name="📢 Canal US", value=f"<#{ch_us}>" if ch_us else "`Não definido`", inline=True)
+    rcon_servers = cfg.get("rcon_servers") or []
+    idx = cfg.get("wipe_announce_rcon_index", 0)
+    srv = rcon_servers[idx] if 0 <= idx < len(rcon_servers) else None
+    embed.add_field(name="🖥️ Nome na embed (RCON)", value=srv.get("name", srv.get("host", "?")) if srv else "`Nenhum`", inline=True)
+    map_link = cfg.get("wipe_announce_map_link") or "`Não definido`"
+    embed.add_field(name="🗺️ Link do mapa", value=map_link[:50] + "…" if isinstance(map_link, str) and len(map_link) > 50 else map_link, inline=False)
+    store = cfg.get("wipe_announce_store_url") or "`Não definido`"
+    embed.add_field(name="🛒 Loja (1 botão)", value=store[:50] + "…" if isinstance(store, str) and len(store) > 50 else store, inline=True)
+    conn_servers = [s for s in rcon_servers if (s.get("connect_url") or "").strip()]
+    conn_txt = "\n".join(f"• **{s.get('name', s.get('host', '?'))}**" for s in conn_servers[:5]) if conn_servers else "`Nenhum (defina por servidor)`"
+    embed.add_field(name="🔗 Connect (1 botão por servidor)", value=conn_txt[:200], inline=False)
+    aviso = (cfg.get("wipe_announce_aviso") or "").strip() or "`Nenhum aviso`"
+    embed.add_field(name="📝 Aviso de atualização", value=aviso[:200] + "…" if len(aviso) > 200 else aviso, inline=False)
+    embed.set_footer(text="Suporte Valley • Config em !sup → Rust → Wipe")
+    return embed
+
+
+class WipeAnnounceConfigModal(discord.ui.Modal, title="Configurar anúncio (mapa, loja, aviso)"):
+    def __init__(self, guild_id: str):
+        super().__init__(timeout=120)
+        self.guild_id = guild_id
+        cfg = get_wipe_config(guild_id)
+        self.add_item(discord.ui.TextInput(label="Link do mapa", placeholder="https://...", default=cfg.get("wipe_announce_map_link") or "", required=False, max_length=500))
+        self.add_item(discord.ui.TextInput(label="URL da Loja", placeholder="https://...", default=cfg.get("wipe_announce_store_url") or "", required=False, max_length=500))
+        self.add_item(discord.ui.TextInput(label="Aviso de atualização", placeholder="Ex: Atualização de veículos nesta wipe", default=cfg.get("wipe_announce_aviso") or "", required=False, style=discord.TextStyle.paragraph, max_length=500))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cfg = get_wipe_config(self.guild_id)
+        cfg["wipe_announce_map_link"] = (self.children[0].value or "").strip() or None
+        cfg["wipe_announce_store_url"] = (self.children[1].value or "").strip() or None
+        cfg["wipe_announce_aviso"] = (self.children[2].value or "").strip() or None
+        save_wipe_config(self.guild_id, cfg)
+        await interaction.response.send_message("✅ Configuração do anúncio salva.", ephemeral=True)
+
+
+class SetConnectUrlModal(discord.ui.Modal, title="URL Connect do servidor"):
+    def __init__(self, guild_id: str, rcon_index: int):
+        super().__init__(timeout=120)
+        self.guild_id = guild_id
+        self.rcon_index = rcon_index
+        cfg = get_wipe_config(guild_id)
+        servers = cfg.get("rcon_servers") or []
+        srv = servers[rcon_index] if 0 <= rcon_index < len(servers) else {}
+        self.add_item(discord.ui.TextInput(
+            label="URL Connect (steam:// ou https://)",
+            placeholder="steam://connect/ip:porta",
+            default=srv.get("connect_url") or "",
+            required=False,
+            max_length=500,
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cfg = get_wipe_config(self.guild_id)
+        servers = list(cfg.get("rcon_servers") or [])
+        if 0 <= self.rcon_index < len(servers):
+            servers[self.rcon_index] = {**servers[self.rcon_index], "connect_url": (self.children[0].value or "").strip() or None}
+            cfg["rcon_servers"] = servers
+            save_wipe_config(self.guild_id, cfg)
+        await interaction.response.send_message("✅ URL Connect do servidor atualizada.", ephemeral=True)
+
+
+class WipeAnnounceConfigView(discord.ui.View):
+    """View no menu !sup → Rust → Wipe: configurar anúncio (canais PT/US, mapa, loja, aviso, Connect por servidor)."""
+
+    def __init__(self, bot, guild_id: str, build_wipe_embed):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+        self.build_wipe_embed = build_wipe_embed
+        cfg = get_wipe_config(guild_id)
+        rcon_servers = cfg.get("rcon_servers") or []
+        opts = [discord.SelectOption(label=s.get("name", s.get("host", "?"))[:100], value=str(i)) for i, s in enumerate(rcon_servers)]
+        if not opts:
+            opts = [discord.SelectOption(label="Nenhum servidor", value="-1")]
+        for c in self.children:
+            cid = getattr(c, "custom_id", None)
+            if cid == "wipe_announce_rcon" or cid == "wipe_announce_set_connect":
+                c.options = opts
+
+    @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[ChannelType.text], placeholder="📢 Canal PT-BR", row=0, custom_id="wipe_announce_ch_pt")
+    async def channel_pt_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        ch = select.values[0] if select.values else None
+        cfg = get_wipe_config(self.guild_id)
+        cfg["wipe_announce_channel_pt"] = str(ch.id) if ch else None
+        save_wipe_config(self.guild_id, cfg)
+        await interaction.response.edit_message(embed=_build_wipe_announce_config_embed(self.guild_id), view=WipeAnnounceConfigView(self.bot, self.guild_id, self.build_wipe_embed))
+        await interaction.followup.send(f"✅ Canal PT-BR: {ch.mention}" if ch else "✅ Canal PT-BR desmarcado.", ephemeral=True)
+
+    @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[ChannelType.text], placeholder="📢 Canal US", row=0, custom_id="wipe_announce_ch_us")
+    async def channel_us_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        ch = select.values[0] if select.values else None
+        cfg = get_wipe_config(self.guild_id)
+        cfg["wipe_announce_channel_us"] = str(ch.id) if ch else None
+        save_wipe_config(self.guild_id, cfg)
+        await interaction.response.edit_message(embed=_build_wipe_announce_config_embed(self.guild_id), view=WipeAnnounceConfigView(self.bot, self.guild_id, self.build_wipe_embed))
+        await interaction.followup.send(f"✅ Canal US: {ch.mention}" if ch else "✅ Canal US desmarcado.", ephemeral=True)
+
+    @discord.ui.select(placeholder="🖥️ Servidor (nome na embed)", row=1, custom_id="wipe_announce_rcon")
+    async def rcon_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if select.values and select.values[0] != "-1":
+            cfg = get_wipe_config(self.guild_id)
+            cfg["wipe_announce_rcon_index"] = int(select.values[0])
+            save_wipe_config(self.guild_id, cfg)
+        await interaction.response.edit_message(embed=_build_wipe_announce_config_embed(self.guild_id), view=WipeAnnounceConfigView(self.bot, self.guild_id, self.build_wipe_embed))
+        await interaction.followup.send("✅ Servidor para nome atualizado.", ephemeral=True)
+
+    @discord.ui.button(label="⚙️ Configurar (mapa, loja, aviso)", style=discord.ButtonStyle.secondary, row=2, custom_id="wipe_announce_config")
+    async def config_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(WipeAnnounceConfigModal(self.guild_id))
+
+    @discord.ui.select(placeholder="🔗 Definir Connect (por servidor)", row=2, custom_id="wipe_announce_set_connect")
+    async def set_connect_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if not select.values or select.values[0] == "-1":
+            return await interaction.response.defer_update()
+        idx = int(select.values[0])
+        await interaction.response.send_modal(SetConnectUrlModal(self.guild_id, idx))
+
+    @discord.ui.button(label="⬅️ Voltar ao Wipe", style=discord.ButtonStyle.secondary, row=3, custom_id="wipe_announce_back")
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = interaction.client.get_cog("WipeCog")
+        embed = cog._build_wipe_embed(self.guild_id) if cog else self.build_wipe_embed(self.guild_id)
+        await interaction.response.edit_message(embed=embed, view=WipeConfigView(self.bot, self.guild_id, self.build_wipe_embed))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not can_use_sup(str(interaction.user.id), self.guild_id):
+            await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+            return False
+        return True
+
+
+class WipeSendView(discord.ui.View):
+    """View do comando !wipe: só escolher idioma para enviar (PT-BR ou US)."""
+
+    def __init__(self, bot, guild_id: str):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.guild_id = guild_id
+
+    @discord.ui.button(label="🇧🇷 Enviar em PT-BR", style=discord.ButtonStyle.primary, row=0, custom_id="wipe_send_pt")
+    async def send_pt(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._send(interaction, "pt")
+
+    @discord.ui.button(label="🇺🇸 Enviar em US (English)", style=discord.ButtonStyle.primary, row=0, custom_id="wipe_send_en")
+    async def send_en(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._send(interaction, "en")
+
+    async def _send(self, interaction: discord.Interaction, lang: str):
+        cfg = get_wipe_config(self.guild_id)
+        ch_id = (cfg.get("wipe_announce_channel_pt") or cfg.get("wipe_announce_channel_id")) if lang == "pt" else cfg.get("wipe_announce_channel_us")
+        if not ch_id:
+            which = "PT-BR" if lang == "pt" else "US"
+            return await interaction.response.send_message(f"❌ Configure o canal **{which}** em !sup → Rust → Wipe → Anúncio no chat.", ephemeral=True)
+        guild = interaction.guild
+        if not guild:
+            return await interaction.response.send_message("❌ Servidor não encontrado.", ephemeral=True)
+        channel = guild.get_channel(int(ch_id))
+        if not channel or not isinstance(channel, discord.TextChannel):
+            return await interaction.response.send_message("❌ Canal não encontrado.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        cog = interaction.client.get_cog("WipeCog")
+        if not cog or not isinstance(cog, WipeCog):
+            return await interaction.followup.send("❌ Módulo de wipe não disponível.", ephemeral=True)
+        embed, view = await cog._build_wipe_announce_message(self.guild_id, lang)
+        if not embed:
+            return await interaction.followup.send("❌ Configure ao menos um servidor RCON em !sup → Rust → Wipe.", ephemeral=True)
+        try:
+            await channel.send(embed=embed, view=view)
+            which = "PT-BR" if lang == "pt" else "US"
+            await interaction.followup.send(f"✅ Anúncio **{which}** enviado em {channel.mention}.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Sem permissão para enviar no canal.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Erro: {str(e)[:100]}", ephemeral=True)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not can_use_sup(str(interaction.user.id), self.guild_id):
+            await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+            return False
+        return True
+
+
 class WipeCog(commands.Cog):
     """Cog de configuração de wipe."""
 
@@ -619,6 +835,64 @@ class WipeCog(commands.Cog):
         for guild_id in get_all_wipe_guild_ids():
             if self._has_any_active_countdown(guild_id):
                 self._ensure_countdown_task(guild_id)
+
+    @commands.command(name="wipe")
+    async def wipe_command(self, ctx: commands.Context):
+        """Abre menu para escolher idioma (PT-BR ou US) e enviar o anúncio no canal configurado em !sup → Rust → Wipe."""
+        if not ctx.guild:
+            return await ctx.send("Use este comando em um servidor.")
+        if not can_use_sup(str(ctx.author.id), str(ctx.guild.id)):
+            return await ctx.send("❌ Sem permissão para usar este comando.")
+        embed = discord.Embed(
+            title="📢 Enviar anúncio de wipe",
+            description="Escolha o idioma da embed. O anúncio será enviado no canal configurado em **!sup → Rust → Wipe → Anúncio no chat**.\n\n• **PT-BR** → canal PT-BR\n• **US** → canal US (English)",
+            color=color_from_hex(get_guild_config(str(ctx.guild.id)).get("color", "#5865F2")),
+            timestamp=datetime.utcnow(),
+        )
+        embed.set_footer(text="Suporte Valley • !wipe")
+        await ctx.send(embed=embed, view=WipeSendView(self.bot, str(ctx.guild.id)))
+
+    async def _build_wipe_announce_message(self, guild_id: str, lang: str = "pt") -> tuple[discord.Embed | None, discord.ui.View | None]:
+        """Monta a embed e a view (1 botão Loja + 1 botão Connect por servidor) no idioma escolhido. Nome do servidor via RCON."""
+        cfg = get_wipe_config(guild_id)
+        rcon_servers = cfg.get("rcon_servers") or []
+        idx = cfg.get("wipe_announce_rcon_index", 0)
+        if idx < 0 or idx >= len(rcon_servers):
+            return None, None
+        labels = _WIPE_ANNOUNCE_LABELS.get(lang) or _WIPE_ANNOUNCE_LABELS["pt"]
+        srv = rcon_servers[idx]
+        host = srv.get("host") or ""
+        port = int(srv.get("port") or 28016)
+        pw = srv.get("password") or ""
+        try:
+            info = await self._rcon_fetch_info(host, port, pw)
+            server_name = (info.get("hostname") or "").strip() or srv.get("name") or host
+        except Exception:
+            server_name = srv.get("name") or host
+        gcfg = get_guild_config(guild_id)
+        color = color_from_hex(gcfg.get("color", "#5865F2"))
+        embed = discord.Embed(
+            title=server_name[:256],
+            color=color,
+            timestamp=datetime.utcnow(),
+        )
+        map_link = (cfg.get("wipe_announce_map_link") or "").strip()
+        if map_link:
+            embed.add_field(name=labels["map"], value=map_link, inline=False)
+        aviso = (cfg.get("wipe_announce_aviso") or "").strip()
+        if aviso:
+            embed.add_field(name=labels["aviso"], value=aviso[:1024], inline=False)
+        embed.set_footer(text="Suporte Valley • Wipe")
+        view = discord.ui.View()
+        store_url = (cfg.get("wipe_announce_store_url") or "").strip()
+        if store_url and (store_url.startswith("http") or store_url.startswith("https")):
+            view.add_item(discord.ui.Button(label=labels["loja"], url=store_url, style=discord.ButtonStyle.link))
+        for s in rcon_servers:
+            url = (s.get("connect_url") or "").strip()
+            if url and (url.startswith("http") or url.startswith("https") or url.startswith("steam:")):
+                name = s.get("name") or s.get("host") or "Connect"
+                view.add_item(discord.ui.Button(label=f"🔗 {name[:80]}", url=url, style=discord.ButtonStyle.link))
+        return embed, view
 
     def _build_wipe_embed(self, guild_id: str) -> discord.Embed:
         cfg = get_wipe_config(guild_id)

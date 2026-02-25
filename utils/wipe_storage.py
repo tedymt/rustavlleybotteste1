@@ -49,7 +49,14 @@ def get_wipe_config(guild_id: str) -> dict:
         "banner_url": None,
         "rcon_servers": [],
         "rcon_draft": {},
-        "countdowns": [],  # lista de countdowns por sala: [{ "id", "channel_id", "rcon_index", "wipe_datetime_utc", "banner_url", "message_id", "embed_options" }]
+        "countdowns": [],
+        # Anúncio de wipe no chat (!wipe): config em !sup → Rust → Wipe; envio por idioma em !wipe
+        "wipe_announce_channel_pt": None,
+        "wipe_announce_channel_us": None,
+        "wipe_announce_map_link": None,
+        "wipe_announce_store_url": None,
+        "wipe_announce_aviso": None,
+        "wipe_announce_rcon_index": 0,
     }
     if guild_id not in data:
         data[guild_id] = defaults.copy()
