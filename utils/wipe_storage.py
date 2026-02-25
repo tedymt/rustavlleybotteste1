@@ -128,6 +128,7 @@ def add_countdown(
     banner_url: str | None = None,
     label: str | None = None,
     lang: str = "pt",
+    category_id: int | None = None,
 ) -> str:
     """Adiciona um countdown por sala. Retorna o id do countdown."""
     cfg = get_wipe_config(guild_id)
@@ -143,6 +144,7 @@ def add_countdown(
         "message_id": None,
         "embed_options": dict(DEFAULT_EMBED_OPTIONS),
         "lang": (lang or "pt").strip().lower() if (lang or "").strip().lower() in ("pt", "en") else "pt",
+        "category_id": category_id,
     }
     countdowns.append(entry)
     cfg["countdowns"] = countdowns
@@ -185,6 +187,28 @@ def set_countdown_message_id(guild_id: str, cd_id: str, message_id: int | None) 
             break
     cfg["countdowns"] = countdowns
     save_wipe_config(guild_id, cfg)
+
+
+def update_countdown(guild_id: str, cd_id: str, updates: dict) -> bool:
+    """Atualiza campos de um countdown por id. Retorna True se encontrou."""
+    cfg = get_wipe_config(guild_id)
+    countdowns = list(cfg.get("countdowns") or [])
+    changed = False
+    for i, c in enumerate(countdowns):
+        if c.get("id") == cd_id:
+            merged = {**c, **updates}
+            # Normaliza idioma quando vier em updates.
+            if "lang" in merged:
+                lang = (merged.get("lang") or "pt").strip().lower()
+                merged["lang"] = lang if lang in ("pt", "en") else "pt"
+            countdowns[i] = merged
+            changed = True
+            break
+    if not changed:
+        return False
+    cfg["countdowns"] = countdowns
+    save_wipe_config(guild_id, cfg)
+    return True
 
 
 def set_countdown_embed_options(guild_id: str, cd_id: str, options: dict) -> None:

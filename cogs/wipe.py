@@ -27,6 +27,7 @@ from utils.wipe_storage import (
     set_countdown_embed_options,
     add_countdown,
     remove_countdown,
+    update_countdown,
 )
 from utils.bot_logs import get_log_channel_id
 from utils.translator import t
@@ -245,7 +246,7 @@ class CountdownsPorSalaView(discord.ui.View):
         countdowns = list_countdowns(guild_id)
         opts = [
             discord.SelectOption(
-                label=(c.get("label") or f"Sala {i+1}")[:100],
+                label=(c.get("label") or f"Painel {i+1}")[:100],
                 value=c.get("id", ""),
                 description=f"Canal {c.get('channel_id')} • {'Ativo' if c.get('message_id') else 'Parado'}",
             )
@@ -256,7 +257,7 @@ class CountdownsPorSalaView(discord.ui.View):
                 c.options = opts
                 break
 
-    @discord.ui.select(placeholder="Escolha um countdown para ações", row=0, custom_id="cd_sala_select")
+    @discord.ui.select(placeholder="Escolha um painel para ações", row=0, custom_id="cd_sala_select")
     async def _countdown_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         self._selected_cd_id = select.values[0] if select.values and select.values[0] != "__none__" else None
         # Compatibilidade com diferentes versões/forks de discord.py:
@@ -310,6 +311,18 @@ class CountdownsPorSalaView(discord.ui.View):
             view=EmbedOptionsView(self.bot, self.guild_id, self._selected_cd_id, self.build_wipe_embed),
         )
 
+    @discord.ui.button(label="🧩 Configurar painel", style=discord.ButtonStyle.secondary, row=2, custom_id="cd_sala_panel")
+    async def config_panel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._selected_cd_id:
+            return await interaction.response.send_message("❌ Selecione um countdown na lista.", ephemeral=True)
+        cd = get_countdown(self.guild_id, self._selected_cd_id)
+        if not cd:
+            return await interaction.response.send_message("❌ Countdown não encontrado.", ephemeral=True)
+        await interaction.response.edit_message(
+            embed=_build_countdown_panel_embed(self.guild_id, cd),
+            view=CountdownPanelConfigView(self.bot, self.guild_id, self._selected_cd_id, self.build_wipe_embed),
+        )
+
     @discord.ui.button(label="🗑️ Remover", style=discord.ButtonStyle.danger, row=2, custom_id="cd_sala_remove")
     async def remove_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self._selected_cd_id:
@@ -353,6 +366,32 @@ def _embed_options_embed(guild_id: str, cd: dict) -> discord.Embed:
         name = {"show_server_name": "Nome do servidor", "show_player_count": "Contagem de jogadores", "show_player_list": "Lista de jogadores", "show_wipe_countdown": "Countdown do wipe", "show_banner": "Banner"}.get(k, k)
         embed.add_field(name=name, value="✅ Sim" if v else "❌ Não", inline=True)
     embed.set_footer(text="Use os botões abaixo para alternar")
+    return embed
+
+
+def _build_countdown_panel_embed(guild_id: str, cd: dict) -> discord.Embed:
+    """Embed da tela de configuração de um painel (countdown por sala)."""
+    gcfg = get_guild_config(guild_id)
+    cfg = get_wipe_config(guild_id)
+    color = color_from_hex(gcfg.get("color", "#5865F2"))
+    rcon_servers = cfg.get("rcon_servers") or []
+    rcon_idx = int(cd.get("rcon_index", 0) or 0)
+    server_name = _server_display_name(rcon_servers[rcon_idx]) if 0 <= rcon_idx < len(rcon_servers) else "?"
+    lang = (cd.get("lang") or "pt").lower()
+    lang_label = "EN-US" if lang == "en" else "PT-BR"
+    ch_id = cd.get("channel_id")
+    cat_id = cd.get("category_id")
+    embed = discord.Embed(
+        title=f"🧩 Configurar painel — {cd.get('label', 'Sala')}",
+        description="Ajuste servidor RCON, idioma e sala deste painel.",
+        color=color,
+        timestamp=datetime.utcnow(),
+    )
+    embed.add_field(name="🖥️ Servidor", value=f"**{server_name}**", inline=True)
+    embed.add_field(name="🌐 Idioma", value=f"**{lang_label}**", inline=True)
+    embed.add_field(name="📢 Sala atual", value=f"<#{ch_id}>" if ch_id else "`Não definida`", inline=True)
+    embed.add_field(name="📁 Categoria fallback", value=f"<#{cat_id}>" if cat_id else "`Sem categoria`", inline=False)
+    embed.set_footer(text="Selecione opções abaixo e clique em Salvar")
     return embed
 
 
@@ -405,6 +444,129 @@ class EmbedOptionsView(discord.ui.View):
         await interaction.response.edit_message(embed=_embed_options_embed(self.guild_id, cd), view=EmbedOptionsView(self.bot, self.guild_id, self.cd_id, self.build_wipe_embed))
 
     @discord.ui.button(label="⬅️ Voltar", style=discord.ButtonStyle.secondary, row=2, custom_id="eo_back")
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=_build_countdowns_sala_embed(self.guild_id),
+            view=CountdownsPorSalaView(self.bot, self.guild_id, self.build_wipe_embed),
+        )
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not can_use_sup(str(interaction.user.id), self.guild_id):
+            await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+            return False
+        return True
+
+
+class CountdownPanelConfigView(discord.ui.View):
+    """Configuração de painel: sala, categoria fallback, idioma e servidor RCON."""
+
+    def __init__(self, bot, guild_id: str, cd_id: str, build_wipe_embed):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+        self.cd_id = cd_id
+        self.build_wipe_embed = build_wipe_embed
+        self._channel_id: int | None = None
+        self._category_id: int | None = None
+        self._lang: str | None = None
+        self._rcon_index: int | None = None
+        cfg = get_wipe_config(guild_id)
+        servers = cfg.get("rcon_servers") or []
+        opts = [
+            discord.SelectOption(
+                label=_server_display_name(s)[:100],
+                value=str(i),
+                description=f"{s.get('host', '?')}:{s.get('port', '?')}",
+            )
+            for i, s in enumerate(servers)
+        ] if servers else [discord.SelectOption(label="Nenhum servidor", value="-1")]
+        for c in self.children:
+            if getattr(c, "custom_id", None) == "cd_panel_rcon":
+                c.options = opts
+                break
+
+    async def _safe_defer(self, interaction: discord.Interaction) -> None:
+        try:
+            if hasattr(interaction.response, "defer_update"):
+                await interaction.response.defer_update()
+            else:
+                await interaction.response.defer()
+        except Exception:
+            pass
+
+    @discord.ui.select(
+        cls=discord.ui.ChannelSelect,
+        channel_types=[ChannelType.text],
+        placeholder="📢 Selecionar sala (canal de countdown)",
+        row=0,
+        custom_id="cd_panel_channel",
+    )
+    async def channel_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        ch = select.values[0] if select.values else None
+        self._channel_id = int(ch.id) if ch else None
+        await self._safe_defer(interaction)
+
+    @discord.ui.select(
+        cls=discord.ui.ChannelSelect,
+        channel_types=[ChannelType.category],
+        placeholder="📁 Categoria fallback (se sala sumir)",
+        row=1,
+        custom_id="cd_panel_category",
+    )
+    async def category_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        ch = select.values[0] if select.values else None
+        self._category_id = int(ch.id) if ch else None
+        await self._safe_defer(interaction)
+
+    @discord.ui.select(
+        placeholder="🌐 Idioma do painel",
+        row=2,
+        custom_id="cd_panel_lang",
+        options=[
+            discord.SelectOption(label="PT-BR", value="pt"),
+            discord.SelectOption(label="EN-US", value="en"),
+        ],
+    )
+    async def lang_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if select.values and select.values[0] in ("pt", "en"):
+            self._lang = select.values[0]
+        await self._safe_defer(interaction)
+
+    @discord.ui.select(placeholder="🖥️ Servidor RCON", row=3, custom_id="cd_panel_rcon")
+    async def rcon_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if select.values and select.values[0] != "-1":
+            self._rcon_index = int(select.values[0])
+        await self._safe_defer(interaction)
+
+    @discord.ui.button(label="💾 Salvar painel", style=discord.ButtonStyle.success, row=4, custom_id="cd_panel_save")
+    async def save_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cd = get_countdown(self.guild_id, self.cd_id)
+        if not cd:
+            return await interaction.response.send_message("❌ Countdown não encontrado.", ephemeral=True)
+        updates = {}
+        if self._channel_id is not None:
+            updates["channel_id"] = self._channel_id
+        if self._category_id is not None:
+            updates["category_id"] = self._category_id
+        if self._lang is not None:
+            updates["lang"] = self._lang
+        if self._rcon_index is not None:
+            cfg = get_wipe_config(self.guild_id)
+            servers = cfg.get("rcon_servers") or []
+            if self._rcon_index < 0 or self._rcon_index >= len(servers):
+                return await interaction.response.send_message("❌ Servidor RCON inválido.", ephemeral=True)
+            updates["rcon_index"] = self._rcon_index
+        if not updates:
+            return await interaction.response.send_message("ℹ️ Nenhuma alteração selecionada.", ephemeral=True)
+        update_countdown(self.guild_id, self.cd_id, updates)
+        cd_new = get_countdown(self.guild_id, self.cd_id)
+        await interaction.response.edit_message(
+            embed=_build_countdown_panel_embed(self.guild_id, cd_new or cd),
+            view=CountdownPanelConfigView(self.bot, self.guild_id, self.cd_id, self.build_wipe_embed),
+        )
+        await interaction.followup.send("✅ Painel atualizado.", ephemeral=True)
+
+    @discord.ui.button(label="⬅️ Voltar", style=discord.ButtonStyle.secondary, row=4, custom_id="cd_panel_back")
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             embed=_build_countdowns_sala_embed(self.guild_id),
@@ -543,7 +705,7 @@ class AddCountdownSalaView(discord.ui.View):
         return True
 
 
-class WipeAddCountdownModal(discord.ui.Modal, title="Countdown por sala — data e nome"):
+class WipeAddCountdownModal(discord.ui.Modal, title="Painel de countdown — data e nome"):
     def __init__(
         self,
         guild_id: str,
@@ -560,7 +722,7 @@ class WipeAddCountdownModal(discord.ui.Modal, title="Countdown por sala — data
         self.rcon_index = rcon_index
         self.lang = lang if lang in ("pt", "en") else "pt"
         self.use_global_wipe = use_global_wipe
-        self.add_item(discord.ui.TextInput(label="Nome da sala (ex: BR 10X)", placeholder="BR 10X — usado também como nome do canal", required=True, max_length=80))
+        self.add_item(discord.ui.TextInput(label="Nome do painel (ex: Painel 1)", placeholder="Painel 1 — usado também como nome do canal", required=True, max_length=80))
         if not use_global_wipe:
             self.add_item(discord.ui.TextInput(label="Data wipe (DD/MM/YYYY)", placeholder="27/02/2026", required=True, max_length=10))
             self.add_item(discord.ui.TextInput(label="Hora wipe (HH:MM) BR", placeholder="15:00", required=True, max_length=5))
@@ -603,6 +765,7 @@ class WipeAddCountdownModal(discord.ui.Modal, title="Countdown por sala — data
                 banner_url=banner,
                 label=label,
                 lang=self.lang,
+                category_id=self.category_id,
             )
             msg = "✅ Canal criado na categoria e countdown **{0}** adicionado." if (self.category_id and interaction.guild) else "✅ Countdown **{0}** adicionado."
             await interaction.response.send_message((msg + " Use «Countdowns por sala» para iniciar.").format(label), ephemeral=True)
@@ -1203,10 +1366,29 @@ class WipeCog(commands.Cog):
         guild = self.bot.get_guild(int(guild_id))
         if not guild:
             return await interaction.followup.send("❌ Servidor não encontrado.", ephemeral=True)
+        srv = rcon_servers[rcon_idx]
         channel = guild.get_channel(int(cd["channel_id"]))
         if not channel or not isinstance(channel, discord.TextChannel):
-            return await interaction.followup.send("❌ Canal não encontrado.", ephemeral=True)
-        srv = rcon_servers[rcon_idx]
+            # Se a sala configurada não existir mais, recria automaticamente com o nome do servidor via RCON.
+            try:
+                info_name = await self._rcon_fetch_info(
+                    srv.get("host") or "",
+                    int(srv.get("port") or 28016),
+                    srv.get("password") or "",
+                )
+                channel_name = _sanitize_channel_name(
+                    (info_name.get("hostname") or _server_display_name(srv) or cd.get("label") or "wipe")
+                )
+            except Exception:
+                channel_name = _sanitize_channel_name(_server_display_name(srv) or cd.get("label") or "wipe")
+            category = None
+            cat_id = cd.get("category_id")
+            if cat_id:
+                cat_obj = guild.get_channel(int(cat_id))
+                if cat_obj and isinstance(cat_obj, discord.CategoryChannel):
+                    category = cat_obj
+            channel = await guild.create_text_channel(channel_name, category=category)
+            update_countdown(guild_id, cd_id, {"channel_id": channel.id})
         full_info = await self._rcon_fetch_full_info(
             srv.get("host") or "",
             int(srv.get("port") or 28016),
