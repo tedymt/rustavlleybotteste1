@@ -92,6 +92,21 @@ class WipeConfigView(discord.ui.View):
         self.guild_id = guild_id
         self.build_embed = build_embed_func
 
+        # Ajusta o texto do botão de RCON conforme já exista servidor configurado ou não.
+        # Assim o usuário não vê sempre "Adicionar servidor" quando já configurou o RCON.
+        cfg = get_wipe_config(guild_id)
+        has_rcon = bool(cfg.get("rcon_servers"))
+        for child in self.children:
+            cid = getattr(child, "custom_id", None)
+            if cid == "wipe_add_rcon":
+                if has_rcon:
+                    # Já existe pelo menos um servidor RCON salvo: muda o rótulo para indicar que é configuração.
+                    child.label = "🖥️ Configurar RCON"
+                else:
+                    # Primeiro uso: mantém a ideia de adicionar.
+                    child.label = "🖥️ Adicionar RCON"
+                break
+
     @discord.ui.select(
         cls=discord.ui.ChannelSelect,
         channel_types=[ChannelType.text],
@@ -555,7 +570,7 @@ class WipeDatetimeModal(discord.ui.Modal, title="Data/hora do wipe (BR)"):
             await interaction.response.send_message("❌ Formato inválido. Use DD/MM/YYYY e HH:MM", ephemeral=True)
 
 
-class WipeRconModal(discord.ui.Modal, title="Adicionar servidor RCON"):
+class WipeRconModal(discord.ui.Modal, title="Configurar servidor RCON"):
     def __init__(self, guild_id: str):
         super().__init__(timeout=120)
         self.guild_id = guild_id
