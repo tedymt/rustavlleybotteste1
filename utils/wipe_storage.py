@@ -120,6 +120,16 @@ def _ensure_countdown_language(cd: dict) -> dict:
     return cd
 
 
+def _ensure_countdown_interval(cd: dict) -> dict:
+    """Garante intervalo de atualização válido (mínimo 5s)."""
+    try:
+        interval = int(cd.get("update_interval_seconds") or 60)
+    except Exception:
+        interval = 60
+    cd["update_interval_seconds"] = max(5, interval)
+    return cd
+
+
 def add_countdown(
     guild_id: str,
     channel_id: int,
@@ -145,6 +155,7 @@ def add_countdown(
         "embed_options": dict(DEFAULT_EMBED_OPTIONS),
         "lang": (lang or "pt").strip().lower() if (lang or "").strip().lower() in ("pt", "en") else "pt",
         "category_id": category_id,
+        "update_interval_seconds": 60,
     }
     countdowns.append(entry)
     cfg["countdowns"] = countdowns
@@ -167,14 +178,14 @@ def get_countdown(guild_id: str, cd_id: str) -> dict | None:
     """Retorna um countdown pelo id."""
     for c in get_wipe_config(guild_id).get("countdowns") or []:
         if c.get("id") == cd_id:
-            return _ensure_countdown_language(_ensure_embed_options(dict(c)))
+            return _ensure_countdown_interval(_ensure_countdown_language(_ensure_embed_options(dict(c))))
     return None
 
 
 def list_countdowns(guild_id: str) -> list[dict]:
     """Lista todos os countdowns da guilda (com embed_options preenchidas)."""
     countdowns = get_wipe_config(guild_id).get("countdowns") or []
-    return [_ensure_countdown_language(_ensure_embed_options(dict(c))) for c in countdowns]
+    return [_ensure_countdown_interval(_ensure_countdown_language(_ensure_embed_options(dict(c)))) for c in countdowns]
 
 
 def set_countdown_message_id(guild_id: str, cd_id: str, message_id: int | None) -> None:
