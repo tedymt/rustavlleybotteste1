@@ -9,6 +9,7 @@ import re
 import socket
 import time
 from datetime import datetime, timezone, timedelta
+from urllib.parse import quote
 
 import discord
 from discord.ext import commands
@@ -1021,6 +1022,21 @@ def _get_connect_url(s: dict) -> str | None:
     return f"steam://connect/{host}:{game_port}"
 
 
+def _button_safe_url(url: str | None) -> str | None:
+    """
+    Normaliza URL para uso em botão do Discord.
+    Discord aceita apenas http/https; quando vier steam://, converte para linkfilter da Steam.
+    """
+    val = (url or "").strip()
+    if not val:
+        return None
+    if val.startswith("https://") or val.startswith("http://"):
+        return val
+    if val.startswith("steam://"):
+        return f"https://steamcommunity.com/linkfilter/?url={quote(val, safe='')}"
+    return None
+
+
 # Textos da embed de anúncio por idioma (pré-definidos)
 _WIPE_ANNOUNCE_LABELS = {
     "pt": {"map": "🗺️ Mapa", "aviso": "📝 Aviso de atualização", "loja": "🛒 Loja", "connect": "🔗 Connect"},
@@ -1352,12 +1368,14 @@ class WipeCog(commands.Cog):
         embed.set_footer(text="Suporte Valley • Wipe")
         view = discord.ui.View()
         store_url = (data.get("store_url") or "").strip()
-        if store_url and (store_url.startswith("http") or store_url.startswith("https")):
-            view.add_item(discord.ui.Button(label=labels["loja"], url=store_url, style=discord.ButtonStyle.link))
+        store_button_url = _button_safe_url(store_url)
+        if store_button_url:
+            view.add_item(discord.ui.Button(label=labels["loja"], url=store_button_url, style=discord.ButtonStyle.link))
         for s in rcon_servers:
-            url = _get_connect_url(s)
-            if url:
-                view.add_item(discord.ui.Button(label=f"🔗 {_server_display_name(s)[:80]}", url=url, style=discord.ButtonStyle.link))
+            raw_url = _get_connect_url(s)
+            safe_url = _button_safe_url(raw_url)
+            if safe_url:
+                view.add_item(discord.ui.Button(label=f"🔗 {_server_display_name(s)[:80]}", url=safe_url, style=discord.ButtonStyle.link))
         return embed, view
 
     def _build_wipe_embed(self, guild_id: str) -> discord.Embed:
