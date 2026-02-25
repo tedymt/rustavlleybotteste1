@@ -442,7 +442,7 @@ class AddCountdownSalaView(discord.ui.View):
         modal = WipeAddCountdownModal(self.guild_id, self.channel_id, self.category_id, self.rcon_index, use_global_wipe=False)
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Usar wipe global (BR)", style=discord.ButtonStyle.secondary, row=2, custom_id="add_cd_global")
+    @discord.ui.button(label="Usar wipe global (BR)", style=discord.ButtonStyle.secondary, row=3, custom_id="add_cd_global")
     async def open_global_modal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.category_id is None and self.channel_id is None:
             return await interaction.response.send_message("❌ Selecione uma **categoria** ou um **canal** existente.", ephemeral=True)
