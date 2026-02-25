@@ -251,7 +251,18 @@ class CountdownsPorSalaView(discord.ui.View):
     @discord.ui.select(placeholder="Escolha um countdown para ações", row=0, custom_id="cd_sala_select")
     async def _countdown_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         self._selected_cd_id = select.values[0] if select.values and select.values[0] != "__none__" else None
-        await interaction.response.defer_update()
+        # Compatibilidade com diferentes versões/forks de discord.py:
+        # algumas têm response.defer_update(), outras só response.defer().
+        try:
+            if hasattr(interaction.response, "defer_update"):
+                await interaction.response.defer_update()
+            else:
+                await interaction.response.defer()
+        except Exception:
+            try:
+                await interaction.response.defer()
+            except Exception:
+                pass
 
     @discord.ui.button(label="➕ Adicionar countdown", style=discord.ButtonStyle.primary, row=1, custom_id="cd_sala_add")
     async def add_countdown_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
