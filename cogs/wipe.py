@@ -1177,10 +1177,10 @@ class WipeCog(commands.Cog):
                     region = await self._get_region_from_ip(host)
                     if info.get("hostname"):
                         s["detected_name"] = info["hostname"][:50]
+                    game_port = info.get("game_port") if isinstance(info.get("game_port"), int) and 1 <= info.get("game_port", 0) <= 65535 else s.get("game_port", 28015)
+                    s["game_port"] = game_port
                     if not s.get("connect_url") and host:
-                        s["connect_url"] = f"steam://connect/{host}:{s.get('game_port', 28015)}"
-                    if "game_port" not in s:
-                        s["game_port"] = 28015
+                        s["connect_url"] = f"steam://connect/{host}:{game_port}"
                     if region:
                         s["region"] = region
                     name = _server_display_name(s)
@@ -1251,13 +1251,14 @@ class WipeCog(commands.Cog):
             region = await self._get_region_from_ip(host)
             hostname = (info.get("hostname") or "").strip() or "(nome não obtido)"
             players = info.get("players", "?")
+            game_port = info.get("game_port") if isinstance(info.get("game_port"), int) and 1 <= info.get("game_port", 0) <= 65535 else 28015
             for i, s in enumerate(servers):
                 if str(s.get("host")) == host and int(s.get("port") or 0) == port:
                     servers[i] = {
                         **s,
                         "detected_name": hostname[:100] if hostname != "(nome não obtido)" else None,
-                        "connect_url": s.get("connect_url") or f"steam://connect/{host}:28015",
-                        "game_port": s.get("game_port", 28015),
+                        "game_port": game_port,
+                        "connect_url": s.get("connect_url") or f"steam://connect/{host}:{game_port}",
                     }
                     break
             cfg["rcon_servers"] = servers
@@ -1381,15 +1382,38 @@ class WipeCog(commands.Cog):
                 names.append(name[:32])
         return names[:50]
 
+    async def _get_game_port_from_rcon(self, host: str, port: int, password: str) -> int | None:
+        """Tenta obter a porta do jogo (client connect) via RCON. Retorna None se não conseguir."""
+        for cmd in ("server.port", "server.port ", "port"):
+            try:
+                out = await self._rust_rcon_command(host, port, password, cmd, timeout_sec=2.0)
+                if not out:
+                    continue
+                # Procura um número que seja porta válida (ex.: 28015, 26684)
+                for m in re.finditer(r"\b(2[0-9]{4}|[3-9]\d{4}|1\d{4})\b", (out or "").strip()):
+                    p = int(m.group(1))
+                    if 1024 <= p <= 65535:
+                        return p
+                # Último recurso: qualquer número 1-65535
+                for m in re.finditer(r"\b(\d{1,5})\b", (out or "").strip()):
+                    p = int(m.group(1))
+                    if 1 <= p <= 65535:
+                        return p
+            except Exception:
+                continue
+        return None
+
     async def _rcon_fetch_info(self, host: str, port: int, password: str) -> dict:
-        """Busca server hostname e player count via WebRcon (websockets, mesmo modelo do bot de referência)."""
+        """Busca server hostname, player count e porta do jogo (para connect) via WebRcon."""
         try:
             timeout = 2.5
             out_hostname = await self._rust_rcon_command(host, port, password, "server.hostname", timeout)
             out_players = await self._rust_rcon_command(host, port, password, "playerlist", timeout)
+            game_port = await self._get_game_port_from_rcon(host, port, password)
             result = {
                 "hostname": (out_hostname or "").strip()[:100] or "",
                 "players": str(self._parse_playerlist(out_players or "")),
+                "game_port": game_port,
             }
             return result
         except Exception as e:
