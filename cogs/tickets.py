@@ -1676,14 +1676,22 @@ class SupMainView(discord.ui.View):
         return True
 
 
+_LOG_TYPE_KEYS = {
+    "startup": "bot_log_channel_id",
+    "rcon": "bot_log_rcon_channel_id",
+    "errors": "bot_log_errors_channel_id",
+}
+
+
 class ConfigBotView(discord.ui.View):
-    """Config do bot: dono, usuários autorizados, cargo suporte, modo manutenção."""
+    """Config do bot: dono, usuários autorizados, cargo suporte, canais de log, modo manutenção."""
 
     def __init__(self, bot, guild_id: str, build_embed_func):
         super().__init__(timeout=300)
         self.bot = bot
         self.guild_id = guild_id
         self.build_embed = build_embed_func
+        self._log_type = "startup"
         config = get_guild_config(guild_id)
         maintenance = config.get("maintenance_mode", False)
         btn_maint_on = discord.ui.Button(
@@ -1796,64 +1804,44 @@ class ConfigBotView(discord.ui.View):
         await interaction.followup.send(f"✅ Cargo de suporte: {role.mention}", ephemeral=True)
 
     @discord.ui.select(
-        cls=ChannelSelect,
-        channel_types=[ChannelType.text],
-        custom_id="sv_bot_log_startup",
-        placeholder="📋 Log Startup",
+        placeholder="📋 Tipo de log",
+        options=[
+            discord.SelectOption(label="Log Startup", value="startup", emoji="🚀", description="Canal de status ao iniciar"),
+            discord.SelectOption(label="Log RCON", value="rcon", emoji="🖥️", description="Canal de status RCON"),
+            discord.SelectOption(label="Log Erros", value="errors", emoji="❌", description="Canal de erros gerais"),
+        ],
         row=2,
+        custom_id="sv_bot_log_type",
     )
-    async def set_log_startup(self, interaction: discord.Interaction, select: ChannelSelect):
-        channel = select.values[0] if select.values else None
-        if not channel:
-            return
-        config = get_guild_config(self.guild_id)
-        config["bot_log_channel_id"] = str(channel.id)
-        save_guild_config(self.guild_id, config)
-        await interaction.response.edit_message(
-            embed=self.build_embed(self.guild_id),
-            view=ConfigBotView(self.bot, self.guild_id, self.build_embed),
+    async def set_log_type(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self._log_type = (select.values or ["startup"])[0]
+        labels = {"startup": "Startup", "rcon": "RCON", "errors": "Erros"}
+        await interaction.response.send_message(
+            f"✅ Tipo: **Log {labels.get(self._log_type, self._log_type)}**. Agora selecione o canal abaixo.",
+            ephemeral=True,
         )
-        await interaction.followup.send(f"✅ Log (Startup): {channel.mention}", ephemeral=True)
 
     @discord.ui.select(
         cls=ChannelSelect,
         channel_types=[ChannelType.text],
-        custom_id="sv_bot_log_rcon",
-        placeholder="🖥️ Log RCON",
-        row=2,
-    )
-    async def set_log_rcon(self, interaction: discord.Interaction, select: ChannelSelect):
-        channel = select.values[0] if select.values else None
-        if not channel:
-            return
-        config = get_guild_config(self.guild_id)
-        config["bot_log_rcon_channel_id"] = str(channel.id)
-        save_guild_config(self.guild_id, config)
-        await interaction.response.edit_message(
-            embed=self.build_embed(self.guild_id),
-            view=ConfigBotView(self.bot, self.guild_id, self.build_embed),
-        )
-        await interaction.followup.send(f"✅ Log (RCON): {channel.mention}", ephemeral=True)
-
-    @discord.ui.select(
-        cls=ChannelSelect,
-        channel_types=[ChannelType.text],
-        custom_id="sv_bot_log_errors",
-        placeholder="❌ Log Erros",
+        custom_id="sv_bot_log_channel",
+        placeholder="Selecione o canal de log",
         row=3,
     )
-    async def set_log_errors(self, interaction: discord.Interaction, select: ChannelSelect):
+    async def set_log_channel(self, interaction: discord.Interaction, select: ChannelSelect):
         channel = select.values[0] if select.values else None
         if not channel:
             return
+        key = _LOG_TYPE_KEYS.get(self._log_type, "bot_log_channel_id")
         config = get_guild_config(self.guild_id)
-        config["bot_log_errors_channel_id"] = str(channel.id)
+        config[key] = str(channel.id)
         save_guild_config(self.guild_id, config)
+        labels = {"startup": "Startup", "rcon": "RCON", "errors": "Erros"}
         await interaction.response.edit_message(
             embed=self.build_embed(self.guild_id),
             view=ConfigBotView(self.bot, self.guild_id, self.build_embed),
         )
-        await interaction.followup.send(f"✅ Log (Erros): {channel.mention}", ephemeral=True)
+        await interaction.followup.send(f"✅ Log ({labels.get(self._log_type, self._log_type)}): {channel.mention}", ephemeral=True)
 
     @discord.ui.button(label="Remover usuário", emoji="➖", style=discord.ButtonStyle.danger, custom_id="sv_bot_remove", row=4)
     async def remove_user_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
