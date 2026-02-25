@@ -1,9 +1,13 @@
 """
 Cog de Wipe — configuração de datas/horários de wipe, countdown, RCON e timezone.
 !sup → RustServer → Wipe
+RCON: protocolo WebRcon do Rust via websockets (ws://host:port/senha + JSON).
 """
 import asyncio
+import json
+import re
 import socket
+import time
 from datetime import datetime, timezone, timedelta
 
 import discord
@@ -353,15 +357,11 @@ class WipeCog(commands.Cog):
         await interaction.followup.send("✅ Countdown iniciado.", ephemeral=True)
 
     def _ensure_rcon_deps(self) -> str | None:
-        """Garante que websockets e webrcon estão instalados. Retorna None se OK, senão mensagem de erro."""
+        """Garante que websockets está instalado (RCON usa só websockets). Retorna None se OK."""
         try:
             import websockets  # noqa: F401
         except ImportError:
             return "O pacote `websockets` não está instalado. Rode: pip install websockets"
-        try:
-            import webrcon  # noqa: F401
-        except ImportError:
-            return "O pacote `webrcon` não está instalado. Rode: pip install webrcon"
         return None
 
     async def _fetch_rcon_info(self, guild_id: str, interaction: discord.Interaction):
@@ -406,18 +406,11 @@ class WipeCog(commands.Cog):
                     lines,
                     color=0x5865F2,
                 )
-        except ImportError as e:
-            msg = str(e).strip()
-            if "websockets" in msg.lower():
-                await interaction.followup.send(
-                    "❌ Falta o pacote **websockets**. No servidor, rode: `pip install websockets` e reinicie o bot.",
-                    ephemeral=True,
-                )
-            else:
-                await interaction.followup.send(
-                    "❌ Instale as dependências RCON: `pip install websockets webrcon aiohttp`",
-                    ephemeral=True,
-                )
+        except ImportError:
+            await interaction.followup.send(
+                "❌ Falta o pacote **websockets**. No servidor, rode: `pip install websockets` e reinicie o bot.",
+                ephemeral=True,
+            )
 
     def _get_rcon_log_channel(self, guild_id: str):
         """Retorna o canal de log RCON (ou startup) da guild, ou None."""
@@ -517,33 +510,48 @@ class WipeCog(commands.Cog):
             color=0x2ECC71,
         )
 
+    async def _rust_rcon_command(self, host: str, port: int, password: str, command: str, timeout_sec: float = 2.5) -> str:
+        """
+        Envia um comando RCON ao servidor Rust (protocolo WebRcon).
+        URI: ws://host:port/senha — payload JSON: Identifier, Message, Name.
+        Modelo do bot de referência (bot para analisar).
+        """
+        import websockets
+        uri = f"ws://{host}:{port}/{password}"
+        payload = {"Identifier": 1, "Message": command, "Name": "WebRcon"}
+        async with websockets.connect(uri, open_timeout=timeout_sec, close_timeout=timeout_sec) as ws:
+            await ws.send(json.dumps(payload))
+            end = time.time() + timeout_sec
+            while time.time() < end:
+                remaining = max(0.1, end - time.time())
+                msg = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                data = json.loads(msg)
+                if data.get("Identifier") == 1:
+                    return data.get("Message") or ""
+        return ""
+
+    def _parse_playerlist(self, output: str) -> int:
+        """Conta jogadores na saída do comando playerlist (Steam ID 64 ou linhas numéricas)."""
+        if not output or not output.strip():
+            return 0
+        steam_ids = re.findall(r"\b7656\d{13}\b", output)
+        if steam_ids:
+            return len(set(steam_ids))
+        lines = [l.strip() for l in output.splitlines() if l.strip()]
+        ignore = ("players", "connected", "id ", "name", "steamid", "----", "total")
+        cleaned = [l for l in lines if not any(w in l.lower() for w in ignore)]
+        return max(0, sum(1 for l in cleaned if re.match(r"^\d+\s+", l)))
+
     async def _rcon_fetch_info(self, host: str, port: int, password: str) -> dict:
-        """Busca server hostname e player count via webrcon."""
+        """Busca server hostname e player count via WebRcon (websockets, mesmo modelo do bot de referência)."""
         try:
-            from webrcon import RconConnector
-            result = {"hostname": "", "players": "?"}
-            responses = []
-
-            def cb(data):
-                responses.append(data)
-
-            connector = RconConnector(host, port, password)
-            loop = asyncio.get_event_loop()
-            await connector.start(loop)
-            try:
-                await connector.command("server.hostname", callback=cb)
-                await asyncio.sleep(1)
-                if responses:
-                    result["hostname"] = (responses[-1].get("Message") or "")[:100].strip()
-                responses.clear()
-                await connector.command("playerlist", callback=cb)
-                await asyncio.sleep(1)
-                if responses:
-                    msg = responses[-1].get("Message") or ""
-                    lines = [l for l in msg.split("\n") if l.strip()]
-                    result["players"] = str(max(0, len(lines) - 1))
-            finally:
-                await connector.close()
+            timeout = 2.5
+            out_hostname = await self._rust_rcon_command(host, port, password, "server.hostname", timeout)
+            out_players = await self._rust_rcon_command(host, port, password, "playerlist", timeout)
+            result = {
+                "hostname": (out_hostname or "").strip()[:100] or "",
+                "players": str(self._parse_playerlist(out_players or "")),
+            }
             return result
         except Exception as e:
             raise RuntimeError(str(e)[:80]) from e
