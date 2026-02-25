@@ -352,12 +352,27 @@ class WipeCog(commands.Cog):
         )
         await interaction.followup.send("✅ Countdown iniciado.", ephemeral=True)
 
+    def _ensure_rcon_deps(self) -> str | None:
+        """Garante que websockets e webrcon estão instalados. Retorna None se OK, senão mensagem de erro."""
+        try:
+            import websockets  # noqa: F401
+        except ImportError:
+            return "O pacote `websockets` não está instalado. Rode: pip install websockets"
+        try:
+            import webrcon  # noqa: F401
+        except ImportError:
+            return "O pacote `webrcon` não está instalado. Rode: pip install webrcon"
+        return None
+
     async def _fetch_rcon_info(self, guild_id: str, interaction: discord.Interaction):
         """Conecta via RCON em todos os servidores e busca nome, jogadores online e localização pelo IP."""
         cfg = get_wipe_config(guild_id)
         servers = cfg.get("rcon_servers", [])
         if not servers:
             return await interaction.response.send_message("❌ Adicione servidores RCON primeiro.", ephemeral=True)
+        err = self._ensure_rcon_deps()
+        if err:
+            return await interaction.response.send_message(f"❌ {err}", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         lines = []
         try:
@@ -391,8 +406,18 @@ class WipeCog(commands.Cog):
                     lines,
                     color=0x5865F2,
                 )
-        except ImportError:
-            await interaction.followup.send("❌ Instale `webrcon` e `aiohttp` para usar RCON.", ephemeral=True)
+        except ImportError as e:
+            msg = str(e).strip()
+            if "websockets" in msg.lower():
+                await interaction.followup.send(
+                    "❌ Falta o pacote **websockets**. No servidor, rode: `pip install websockets` e reinicie o bot.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.followup.send(
+                    "❌ Instale as dependências RCON: `pip install websockets webrcon aiohttp`",
+                    ephemeral=True,
+                )
 
     def _get_rcon_log_channel(self, guild_id: str):
         """Retorna o canal de log RCON (ou startup) da guild, ou None."""
@@ -429,6 +454,8 @@ class WipeCog(commands.Cog):
 
     async def _check_and_log_new_rcon_server(self, guild_id: str, host: str, port: int, password: str, name: str) -> None:
         """Verifica um servidor RCON recém-adicionado e envia log (nome + jogadores) para confirmar configuração."""
+        if self._ensure_rcon_deps():
+            return
         try:
             info = await self._rcon_fetch_info(host, port, password)
             region = await self._get_region_from_ip(host)
@@ -455,6 +482,8 @@ class WipeCog(commands.Cog):
 
     async def _send_rcon_status_log(self, guild_id: str) -> None:
         """Envia log de status RCON para o canal configurado (startup ou rcon). Chamado ao iniciar o bot."""
+        if self._ensure_rcon_deps():
+            return
         cfg = get_wipe_config(guild_id)
         servers = cfg.get("rcon_servers", [])
         if not servers:

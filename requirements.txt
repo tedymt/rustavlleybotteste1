@@ -4,5 +4,7 @@ deep-translator>=1.11.0
 langdetect>=1.0.9
 openai>=1.0.0
 groq>=0.4.0
+# RCON: webrcon usa websockets; o webrcon não declara no PyPI, então instalamos antes
+websockets>=10.0
 webrcon>=0.1.0
 aiohttp>=3.9.0
