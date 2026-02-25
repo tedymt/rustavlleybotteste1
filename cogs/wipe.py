@@ -729,7 +729,7 @@ class WipeAnnounceConfigView(discord.ui.View):
         await interaction.response.edit_message(embed=_build_wipe_announce_config_embed(self.guild_id), view=WipeAnnounceConfigView(self.bot, self.guild_id, self.build_wipe_embed))
         await interaction.followup.send(f"✅ Canal PT-BR: {ch.mention}" if ch else "✅ Canal PT-BR desmarcado.", ephemeral=True)
 
-    @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[ChannelType.text], placeholder="📢 Canal US", row=0, custom_id="wipe_announce_ch_us")
+    @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[ChannelType.text], placeholder="📢 Canal US", row=1, custom_id="wipe_announce_ch_us")
     async def channel_us_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
         ch = select.values[0] if select.values else None
         cfg = get_wipe_config(self.guild_id)
@@ -738,7 +738,7 @@ class WipeAnnounceConfigView(discord.ui.View):
         await interaction.response.edit_message(embed=_build_wipe_announce_config_embed(self.guild_id), view=WipeAnnounceConfigView(self.bot, self.guild_id, self.build_wipe_embed))
         await interaction.followup.send(f"✅ Canal US: {ch.mention}" if ch else "✅ Canal US desmarcado.", ephemeral=True)
 
-    @discord.ui.select(placeholder="🖥️ Servidor (nome na embed)", row=1, custom_id="wipe_announce_rcon")
+    @discord.ui.select(placeholder="🖥️ Servidor (nome na embed)", row=2, custom_id="wipe_announce_rcon")
     async def rcon_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         if select.values and select.values[0] != "-1":
             cfg = get_wipe_config(self.guild_id)
@@ -747,11 +747,11 @@ class WipeAnnounceConfigView(discord.ui.View):
         await interaction.response.edit_message(embed=_build_wipe_announce_config_embed(self.guild_id), view=WipeAnnounceConfigView(self.bot, self.guild_id, self.build_wipe_embed))
         await interaction.followup.send("✅ Servidor para nome atualizado.", ephemeral=True)
 
-    @discord.ui.button(label="⚙️ Configurar (mapa, loja, aviso)", style=discord.ButtonStyle.secondary, row=2, custom_id="wipe_announce_config")
+    @discord.ui.button(label="⚙️ Configurar (mapa, loja, aviso)", style=discord.ButtonStyle.secondary, row=3, custom_id="wipe_announce_config")
     async def config_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(WipeAnnounceConfigModal(self.guild_id))
 
-    @discord.ui.select(placeholder="🔗 Definir Connect (por servidor)", row=2, custom_id="wipe_announce_set_connect")
+    @discord.ui.select(placeholder="🔗 Definir Connect (por servidor)", row=4, custom_id="wipe_announce_set_connect")
     async def set_connect_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         if not select.values or select.values[0] == "-1":
             return await interaction.response.defer_update()
