@@ -419,20 +419,20 @@ class AddCountdownSalaView(discord.ui.View):
         self.category_id = ch.id if ch else None
         await interaction.response.defer_update()
 
-    @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[ChannelType.text], placeholder="📢 Ou use um canal existente", row=0, custom_id="add_cd_ch")
+    @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[ChannelType.text], placeholder="📢 Ou use um canal existente", row=1, custom_id="add_cd_ch")
     async def channel_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
         ch = select.values[0] if select.values else None
         if ch:
             self.channel_id = ch.id
         await interaction.response.defer_update()
 
-    @discord.ui.select(placeholder="🖥️ Servidor RCON", row=1, custom_id="add_cd_rcon")
+    @discord.ui.select(placeholder="🖥️ Servidor RCON", row=2, custom_id="add_cd_rcon")
     async def _rcon_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         if select.values and select.values[0] != "-1":
             self.rcon_index = int(select.values[0])
         await interaction.response.defer_update()
 
-    @discord.ui.button(label="Definir data/hora e nome", style=discord.ButtonStyle.primary, row=2, custom_id="add_cd_modal")
+    @discord.ui.button(label="Definir data/hora e nome", style=discord.ButtonStyle.primary, row=3, custom_id="add_cd_modal")
     async def open_modal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.category_id is None and self.channel_id is None:
             return await interaction.response.send_message("❌ Selecione uma **categoria** (para criar canal) ou um **canal** existente.", ephemeral=True)
