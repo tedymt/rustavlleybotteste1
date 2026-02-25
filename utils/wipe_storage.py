@@ -111,6 +111,15 @@ def _ensure_embed_options(cd: dict) -> dict:
     return cd
 
 
+def _ensure_countdown_language(cd: dict) -> dict:
+    """Garante que o countdown tenha idioma válido (pt/en)."""
+    lang = (cd.get("lang") or "pt").strip().lower()
+    if lang not in ("pt", "en"):
+        lang = "pt"
+    cd["lang"] = lang
+    return cd
+
+
 def add_countdown(
     guild_id: str,
     channel_id: int,
@@ -118,6 +127,7 @@ def add_countdown(
     wipe_datetime_utc: str,
     banner_url: str | None = None,
     label: str | None = None,
+    lang: str = "pt",
 ) -> str:
     """Adiciona um countdown por sala. Retorna o id do countdown."""
     cfg = get_wipe_config(guild_id)
@@ -132,6 +142,7 @@ def add_countdown(
         "banner_url": banner_url or None,
         "message_id": None,
         "embed_options": dict(DEFAULT_EMBED_OPTIONS),
+        "lang": (lang or "pt").strip().lower() if (lang or "").strip().lower() in ("pt", "en") else "pt",
     }
     countdowns.append(entry)
     cfg["countdowns"] = countdowns
@@ -154,14 +165,14 @@ def get_countdown(guild_id: str, cd_id: str) -> dict | None:
     """Retorna um countdown pelo id."""
     for c in get_wipe_config(guild_id).get("countdowns") or []:
         if c.get("id") == cd_id:
-            return _ensure_embed_options(dict(c))
+            return _ensure_countdown_language(_ensure_embed_options(dict(c)))
     return None
 
 
 def list_countdowns(guild_id: str) -> list[dict]:
     """Lista todos os countdowns da guilda (com embed_options preenchidas)."""
     countdowns = get_wipe_config(guild_id).get("countdowns") or []
-    return [_ensure_embed_options(dict(c)) for c in countdowns]
+    return [_ensure_countdown_language(_ensure_embed_options(dict(c))) for c in countdowns]
 
 
 def set_countdown_message_id(guild_id: str, cd_id: str, message_id: int | None) -> None:

@@ -66,10 +66,10 @@ def _utc_to_local(utc_dt: datetime, offset_hours: int) -> datetime:
     return utc_dt + timedelta(hours=offset_hours)
 
 
-def _format_countdown(target: datetime) -> str:
+def _format_countdown(target: datetime, lang: str = "pt") -> str:
     now = datetime.now(timezone.utc)
     if target <= now:
-        return "⏰ **WIPE EM ANDAMENTO**"
+        return "⏰ **WIPE IN PROGRESS**" if lang == "en" else "⏰ **WIPE EM ANDAMENTO**"
     delta = target - now
     days = delta.days
     hours, rem = divmod(delta.seconds, 3600)
@@ -208,15 +208,23 @@ def _build_countdowns_sala_embed(guild_id: str) -> discord.Embed:
         timestamp=datetime.utcnow(),
     )
     countdowns = list_countdowns(guild_id)
+    # Evita mostrar countdowns duplicados caso existam entradas repetidas no storage.
+    seen_ids: set[str] = set()
     rcon_servers = cfg.get("rcon_servers") or []
     for cd in countdowns:
+        cd_id = str(cd.get("id") or "")
+        if cd_id in seen_ids:
+            continue
+        seen_ids.add(cd_id)
         ch_id = cd.get("channel_id")
         rcon_idx = cd.get("rcon_index", 0)
         srv_name = rcon_servers[rcon_idx].get("name", "?") if 0 <= rcon_idx < len(rcon_servers) else "?"
         status = "🟢 Ativo" if cd.get("message_id") else "⚪ Parado"
+        lang = (cd.get("lang") or "pt").lower()
+        lang_label = "EN-US" if lang == "en" else "PT-BR"
         embed.add_field(
             name=f"{cd.get('label', 'Sala')} — {status}",
-            value=f"Canal: <#{ch_id}>\nServidor: **{srv_name}**\nWipe: `{cd.get('wipe_datetime_utc', '?')[:16] or '?'}`",
+            value=f"Canal: <#{ch_id}>\nServidor: **{srv_name}**\nIdioma: **{lang_label}**\nWipe: `{cd.get('wipe_datetime_utc', '?')[:16] or '?'}`",
             inline=False,
         )
     if not countdowns:
@@ -428,6 +436,7 @@ class AddCountdownSalaView(discord.ui.View):
         self.channel_id: int | None = None
         self.category_id: int | None = None
         self.rcon_index: int = 0
+        self.countdown_lang: str = "pt"
         cfg = get_wipe_config(guild_id)
         servers = cfg.get("rcon_servers") or []
         rcon_opts = [
@@ -464,23 +473,44 @@ class AddCountdownSalaView(discord.ui.View):
             self.channel_id = ch.id
         await self._defer_update(interaction)
 
-    @discord.ui.select(placeholder="🖥️ Servidor RCON", row=2, custom_id="add_cd_rcon")
+    @discord.ui.select(
+        placeholder="🌐 Idioma do countdown",
+        row=2,
+        custom_id="add_cd_lang",
+        options=[
+            discord.SelectOption(label="PT-BR", value="pt", description="Embed totalmente em português"),
+            discord.SelectOption(label="EN-US", value="en", description="Embed totalmente em inglês"),
+        ],
+    )
+    async def _lang_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if select.values and select.values[0] in ("pt", "en"):
+            self.countdown_lang = select.values[0]
+        await self._defer_update(interaction)
+
+    @discord.ui.select(placeholder="🖥️ Servidor RCON", row=3, custom_id="add_cd_rcon")
     async def _rcon_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         if select.values and select.values[0] != "-1":
             self.rcon_index = int(select.values[0])
         await self._defer_update(interaction)
 
-    @discord.ui.button(label="Definir data/hora e nome", style=discord.ButtonStyle.primary, row=3, custom_id="add_cd_modal")
+    @discord.ui.button(label="Definir data/hora e nome", style=discord.ButtonStyle.primary, row=4, custom_id="add_cd_modal")
     async def open_modal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.category_id is None and self.channel_id is None:
             return await interaction.response.send_message("❌ Selecione uma **categoria** (para criar canal) ou um **canal** existente.", ephemeral=True)
         cfg = get_wipe_config(self.guild_id)
         if self.rcon_index < 0 or self.rcon_index >= len(cfg.get("rcon_servers") or []):
             return await interaction.response.send_message("❌ Selecione um servidor RCON.", ephemeral=True)
-        modal = WipeAddCountdownModal(self.guild_id, self.channel_id, self.category_id, self.rcon_index, use_global_wipe=False)
+        modal = WipeAddCountdownModal(
+            self.guild_id,
+            self.channel_id,
+            self.category_id,
+            self.rcon_index,
+            lang=self.countdown_lang,
+            use_global_wipe=False,
+        )
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Usar wipe global (BR)", style=discord.ButtonStyle.secondary, row=3, custom_id="add_cd_global")
+    @discord.ui.button(label="Usar wipe global (BR)", style=discord.ButtonStyle.secondary, row=4, custom_id="add_cd_global")
     async def open_global_modal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.category_id is None and self.channel_id is None:
             return await interaction.response.send_message("❌ Selecione uma **categoria** ou um **canal** existente.", ephemeral=True)
@@ -489,10 +519,17 @@ class AddCountdownSalaView(discord.ui.View):
             return await interaction.response.send_message("❌ Defina a data/hora do wipe no menu **Wipe** (📅 Definir data/hora BR) primeiro.", ephemeral=True)
         if self.rcon_index < 0 or self.rcon_index >= len(cfg.get("rcon_servers") or []):
             return await interaction.response.send_message("❌ Selecione um servidor RCON.", ephemeral=True)
-        modal = WipeAddCountdownModal(self.guild_id, self.channel_id, self.category_id, self.rcon_index, use_global_wipe=True)
+        modal = WipeAddCountdownModal(
+            self.guild_id,
+            self.channel_id,
+            self.category_id,
+            self.rcon_index,
+            lang=self.countdown_lang,
+            use_global_wipe=True,
+        )
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="⬅️ Cancelar", style=discord.ButtonStyle.secondary, row=3, custom_id="add_cd_cancel")
+    @discord.ui.button(label="⬅️ Cancelar", style=discord.ButtonStyle.secondary, row=4, custom_id="add_cd_cancel")
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             embed=_build_countdowns_sala_embed(self.guild_id),
@@ -507,12 +544,21 @@ class AddCountdownSalaView(discord.ui.View):
 
 
 class WipeAddCountdownModal(discord.ui.Modal, title="Countdown por sala — data e nome"):
-    def __init__(self, guild_id: str, channel_id: int | None, category_id: int | None, rcon_index: int, use_global_wipe: bool = False):
+    def __init__(
+        self,
+        guild_id: str,
+        channel_id: int | None,
+        category_id: int | None,
+        rcon_index: int,
+        lang: str = "pt",
+        use_global_wipe: bool = False,
+    ):
         super().__init__(timeout=120)
         self.guild_id = guild_id
         self.channel_id = channel_id
         self.category_id = category_id
         self.rcon_index = rcon_index
+        self.lang = lang if lang in ("pt", "en") else "pt"
         self.use_global_wipe = use_global_wipe
         self.add_item(discord.ui.TextInput(label="Nome da sala (ex: BR 10X)", placeholder="BR 10X — usado também como nome do canal", required=True, max_length=80))
         if not use_global_wipe:
@@ -549,7 +595,15 @@ class WipeAddCountdownModal(discord.ui.Modal, title="Countdown por sala — data
                 await interaction.response.send_message("❌ Selecione um canal ou uma categoria.", ephemeral=True)
                 return
 
-            add_countdown(self.guild_id, channel_id_to_use, self.rcon_index, dt_utc_str, banner_url=banner, label=label)
+            add_countdown(
+                self.guild_id,
+                channel_id_to_use,
+                self.rcon_index,
+                dt_utc_str,
+                banner_url=banner,
+                label=label,
+                lang=self.lang,
+            )
             msg = "✅ Canal criado na categoria e countdown **{0}** adicionado." if (self.category_id and interaction.guild) else "✅ Countdown **{0}** adicionado."
             await interaction.response.send_message((msg + " Use «Countdowns por sala» para iniciar.").format(label), ephemeral=True)
         except (ValueError, IndexError):
@@ -1589,31 +1643,60 @@ class WipeCog(commands.Cog):
         gcfg = get_guild_config(guild_id)
         color = color_from_hex(gcfg.get("color", "#5865F2"))
         opts = cd.get("embed_options") or DEFAULT_EMBED_OPTIONS
-        hostname = (full_info.get("hostname") or "").strip() or "Servidor"
-        title = hostname if opts.get("show_server_name", True) else "⏱️ Countdown Wipe"
+        lang = (cd.get("lang") or "pt").lower()
+        labels = {
+            "pt": {
+                "default_server": "Servidor",
+                "countdown_title": "⏱️ Countdown Wipe",
+                "local_time": "🕐 Horário local (região do servidor)",
+                "players_online": "Jogadores online",
+                "player_list": "Lista de jogadores",
+                "more_suffix": "mais",
+                "footer": "Atualiza a cada minuto",
+            },
+            "en": {
+                "default_server": "Server",
+                "countdown_title": "⏱️ Wipe Countdown",
+                "local_time": "🕐 Local time (server region)",
+                "players_online": "Players online",
+                "player_list": "Player list",
+                "more_suffix": "more",
+                "footer": "Updates every minute",
+            },
+        }.get(lang, {
+            "default_server": "Servidor",
+            "countdown_title": "⏱️ Countdown Wipe",
+            "local_time": "🕐 Horário local (região do servidor)",
+            "players_online": "Jogadores online",
+            "player_list": "Lista de jogadores",
+            "more_suffix": "mais",
+            "footer": "Atualiza a cada minuto",
+        })
+        hostname = (full_info.get("hostname") or "").strip() or labels["default_server"]
+        title = hostname if opts.get("show_server_name", True) else labels["countdown_title"]
         embed = discord.Embed(
             title=title[:256],
             color=color,
             timestamp=datetime.utcnow(),
         )
         if opts.get("show_wipe_countdown", True) and target_dt:
-            embed.description = _format_countdown(target_dt)
+            embed.description = _format_countdown(target_dt, lang=lang)
         if opts.get("show_wipe_countdown", True) and local_wipe_str:
-            embed.add_field(name="🕐 Horário local (região do servidor)", value=local_wipe_str, inline=False)
+            embed.add_field(name=labels["local_time"], value=local_wipe_str, inline=False)
         if opts.get("show_player_count", True):
             count = full_info.get("players", 0)
-            embed.add_field(name="Jogadores online", value=str(count), inline=True)
+            embed.add_field(name=labels["players_online"], value=str(count), inline=True)
         if opts.get("show_player_list", True):
             names = full_info.get("player_names") or []
             # Só mostra a lista se houver ao menos um jogador; caso contrário, não exibe o campo.
             if names:
                 text = "\n".join(f"• {n}" for n in names[:25])
                 if len(names) > 25:
-                    text += f"\n*+{len(names) - 25} mais*"
-                embed.add_field(name="Lista de jogadores", value=text[:1024] or "—", inline=False)
+                    text += f"\n*+{len(names) - 25} {labels['more_suffix']}*"
+                embed.add_field(name=labels["player_list"], value=text[:1024] or "—", inline=False)
         if opts.get("show_banner", True) and cd.get("banner_url"):
             embed.set_image(url=cd["banner_url"])
-        embed.set_footer(text="Atualiza a cada minuto")
+        embed.set_footer(text=labels["footer"])
         return embed
 
     async def _countdown_loop(self, guild_id: str):
