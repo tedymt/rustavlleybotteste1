@@ -16,7 +16,18 @@ from discord.enums import ChannelType
 
 from config import BOT_OWNER_ID
 from utils.storage import get_guild_config, save_guild_config
-from utils.wipe_storage import get_wipe_config, save_wipe_config
+from utils.wipe_storage import (
+    get_wipe_config,
+    save_wipe_config,
+    get_all_wipe_guild_ids,
+    DEFAULT_EMBED_OPTIONS,
+    list_countdowns,
+    get_countdown,
+    set_countdown_message_id,
+    set_countdown_embed_options,
+    add_countdown,
+    remove_countdown,
+)
 from utils.bot_logs import get_log_channel_id
 from utils.translator import t
 
@@ -134,6 +145,14 @@ class WipeConfigView(discord.ui.View):
         if cog:
             await cog._stop_countdown(self.guild_id, interaction)
 
+    @discord.ui.button(label="📋 Countdowns por sala", style=discord.ButtonStyle.secondary, row=3, custom_id="wipe_salas")
+    async def countdowns_por_sala(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = _build_countdowns_sala_embed(self.guild_id)
+        await interaction.response.edit_message(
+            embed=embed,
+            view=CountdownsPorSalaView(self.bot, self.guild_id, self.build_embed),
+        )
+
     @discord.ui.button(label="⬅️ Voltar", style=discord.ButtonStyle.secondary, row=4, custom_id="wipe_back")
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         from cogs.tickets import RustCategoryView, _rust_menu_embed
@@ -144,6 +163,343 @@ class WipeConfigView(discord.ui.View):
             await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
             return False
         return True
+
+
+def _build_countdowns_sala_embed(guild_id: str) -> discord.Embed:
+    """Embed da tela Countdowns por sala."""
+    cfg = get_wipe_config(guild_id)
+    gcfg = get_guild_config(guild_id)
+    color = color_from_hex(gcfg.get("color", "#5865F2"))
+    embed = discord.Embed(
+        title="📋 Countdowns por sala",
+        description="Um countdown por canal (ex.: BR 10X numa sala, EU noutra). Sem limite.",
+        color=color,
+        timestamp=datetime.utcnow(),
+    )
+    countdowns = list_countdowns(guild_id)
+    rcon_servers = cfg.get("rcon_servers") or []
+    for cd in countdowns:
+        ch_id = cd.get("channel_id")
+        rcon_idx = cd.get("rcon_index", 0)
+        srv_name = rcon_servers[rcon_idx].get("name", "?") if 0 <= rcon_idx < len(rcon_servers) else "?"
+        status = "🟢 Ativo" if cd.get("message_id") else "⚪ Parado"
+        embed.add_field(
+            name=f"{cd.get('label', 'Sala')} — {status}",
+            value=f"Canal: <#{ch_id}>\nServidor: **{srv_name}**\nWipe: `{cd.get('wipe_datetime_utc', '?')[:16] or '?'}`",
+            inline=False,
+        )
+    if not countdowns:
+        embed.add_field(name="—", value="Nenhum countdown por sala. Clique em **Adicionar countdown**.", inline=False)
+    embed.set_footer(text="Suporte Valley • Wipe por sala")
+    return embed
+
+
+class CountdownsPorSalaView(discord.ui.View):
+    """View: listar countdowns por sala, adicionar, iniciar/parar/config/remover."""
+
+    def __init__(self, bot, guild_id: str, build_wipe_embed):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+        self.build_wipe_embed = build_wipe_embed
+        self._selected_cd_id: str | None = None
+        countdowns = list_countdowns(guild_id)
+        opts = [
+            discord.SelectOption(
+                label=(c.get("label") or f"Sala {i+1}")[:100],
+                value=c.get("id", ""),
+                description=f"Canal {c.get('channel_id')} • {'Ativo' if c.get('message_id') else 'Parado'}",
+            )
+            for i, c in enumerate(countdowns)
+        ] if countdowns else [discord.SelectOption(label="Nenhum countdown", value="__none__")]
+        for c in self.children:
+            if getattr(c, "custom_id", None) == "cd_sala_select":
+                c.options = opts
+                break
+
+    @discord.ui.select(placeholder="Escolha um countdown para ações", row=0, custom_id="cd_sala_select")
+    async def _countdown_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self._selected_cd_id = select.values[0] if select.values and select.values[0] != "__none__" else None
+        await interaction.response.defer_update()
+
+    @discord.ui.button(label="➕ Adicionar countdown", style=discord.ButtonStyle.primary, row=1, custom_id="cd_sala_add")
+    async def add_countdown_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cfg = get_wipe_config(self.guild_id)
+        rcon_servers = cfg.get("rcon_servers") or []
+        if not rcon_servers:
+            return await interaction.response.send_message("❌ Adicione ao menos um servidor RCON em Wipe primeiro.", ephemeral=True)
+        await interaction.response.edit_message(
+            view=AddCountdownSalaView(self.bot, self.guild_id, self.build_wipe_embed),
+        )
+
+    @discord.ui.button(label="▶️ Iniciar", style=discord.ButtonStyle.success, row=1, custom_id="cd_sala_start")
+    async def start_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._selected_cd_id:
+            return await interaction.response.send_message("❌ Selecione um countdown na lista.", ephemeral=True)
+        cog = interaction.client.get_cog("WipeCog")
+        if cog:
+            await cog._start_countdown_for_sala(self.guild_id, self._selected_cd_id, interaction)
+
+    @discord.ui.button(label="⏹️ Parar", style=discord.ButtonStyle.danger, row=1, custom_id="cd_sala_stop")
+    async def stop_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._selected_cd_id:
+            return await interaction.response.send_message("❌ Selecione um countdown na lista.", ephemeral=True)
+        cog = interaction.client.get_cog("WipeCog")
+        if cog:
+            await cog._stop_countdown_for_sala(self.guild_id, self._selected_cd_id, interaction)
+
+    @discord.ui.button(label="⚙️ Configurar embed", style=discord.ButtonStyle.secondary, row=2, custom_id="cd_sala_embed")
+    async def config_embed_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._selected_cd_id:
+            return await interaction.response.send_message("❌ Selecione um countdown na lista.", ephemeral=True)
+        cd = get_countdown(self.guild_id, self._selected_cd_id)
+        if not cd:
+            return await interaction.response.send_message("❌ Countdown não encontrado.", ephemeral=True)
+        await interaction.response.edit_message(
+            embed=_embed_options_embed(self.guild_id, cd),
+            view=EmbedOptionsView(self.bot, self.guild_id, self._selected_cd_id, self.build_wipe_embed),
+        )
+
+    @discord.ui.button(label="🗑️ Remover", style=discord.ButtonStyle.danger, row=2, custom_id="cd_sala_remove")
+    async def remove_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._selected_cd_id:
+            return await interaction.response.send_message("❌ Selecione um countdown na lista.", ephemeral=True)
+        remove_countdown(self.guild_id, self._selected_cd_id)
+        self._selected_cd_id = None
+        await interaction.response.edit_message(
+            embed=_build_countdowns_sala_embed(self.guild_id),
+            view=CountdownsPorSalaView(self.bot, self.guild_id, self.build_wipe_embed),
+        )
+        await interaction.followup.send("✅ Countdown removido.", ephemeral=True)
+
+    @discord.ui.button(label="⬅️ Voltar ao Wipe", style=discord.ButtonStyle.secondary, row=3, custom_id="cd_sala_back")
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cog = interaction.client.get_cog("WipeCog")
+        embed = cog._build_wipe_embed(self.guild_id) if cog else self.build_wipe_embed(self.guild_id)
+        await interaction.response.edit_message(
+            embed=embed,
+            view=WipeConfigView(self.bot, self.guild_id, self.build_wipe_embed),
+        )
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not can_use_sup(str(interaction.user.id), self.guild_id):
+            await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+            return False
+        return True
+
+
+def _embed_options_embed(guild_id: str, cd: dict) -> discord.Embed:
+    """Embed da tela de opções do embed (o que mostrar em cada painel)."""
+    gcfg = get_guild_config(guild_id)
+    color = color_from_hex(gcfg.get("color", "#5865F2"))
+    opts = cd.get("embed_options") or DEFAULT_EMBED_OPTIONS
+    embed = discord.Embed(
+        title=f"⚙️ Conteúdo do embed — {cd.get('label', 'Sala')}",
+        description="Marque o que deve aparecer neste countdown (nome do servidor, jogadores, lista, etc.).",
+        color=color,
+        timestamp=datetime.utcnow(),
+    )
+    for k, v in opts.items():
+        name = {"show_server_name": "Nome do servidor", "show_player_count": "Contagem de jogadores", "show_player_list": "Lista de jogadores", "show_wipe_countdown": "Countdown do wipe", "show_banner": "Banner"}.get(k, k)
+        embed.add_field(name=name, value="✅ Sim" if v else "❌ Não", inline=True)
+    embed.set_footer(text="Use os botões abaixo para alternar")
+    return embed
+
+
+class EmbedOptionsView(discord.ui.View):
+    """Toggle das opções do embed (nome do servidor, jogadores, lista, countdown, banner)."""
+
+    def __init__(self, bot, guild_id: str, cd_id: str, build_wipe_embed):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+        self.cd_id = cd_id
+        self.build_wipe_embed = build_wipe_embed
+
+    def _toggle(self, key: str):
+        cd = get_countdown(self.guild_id, self.cd_id)
+        if not cd:
+            return
+        opts = dict(cd.get("embed_options") or DEFAULT_EMBED_OPTIONS)
+        opts[key] = not opts.get(key, True)
+        set_countdown_embed_options(self.guild_id, self.cd_id, opts)
+
+    @discord.ui.button(label="Nome servidor", style=discord.ButtonStyle.secondary, row=0, custom_id="eo_name")
+    async def btn_name(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self._toggle("show_server_name")
+        cd = get_countdown(self.guild_id, self.cd_id)
+        await interaction.response.edit_message(embed=_embed_options_embed(self.guild_id, cd), view=EmbedOptionsView(self.bot, self.guild_id, self.cd_id, self.build_wipe_embed))
+
+    @discord.ui.button(label="Qtd jogadores", style=discord.ButtonStyle.secondary, row=0, custom_id="eo_count")
+    async def btn_count(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self._toggle("show_player_count")
+        cd = get_countdown(self.guild_id, self.cd_id)
+        await interaction.response.edit_message(embed=_embed_options_embed(self.guild_id, cd), view=EmbedOptionsView(self.bot, self.guild_id, self.cd_id, self.build_wipe_embed))
+
+    @discord.ui.button(label="Lista jogadores", style=discord.ButtonStyle.secondary, row=0, custom_id="eo_list")
+    async def btn_list(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self._toggle("show_player_list")
+        cd = get_countdown(self.guild_id, self.cd_id)
+        await interaction.response.edit_message(embed=_embed_options_embed(self.guild_id, cd), view=EmbedOptionsView(self.bot, self.guild_id, self.cd_id, self.build_wipe_embed))
+
+    @discord.ui.button(label="Countdown wipe", style=discord.ButtonStyle.secondary, row=1, custom_id="eo_cd")
+    async def btn_cd(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self._toggle("show_wipe_countdown")
+        cd = get_countdown(self.guild_id, self.cd_id)
+        await interaction.response.edit_message(embed=_embed_options_embed(self.guild_id, cd), view=EmbedOptionsView(self.bot, self.guild_id, self.cd_id, self.build_wipe_embed))
+
+    @discord.ui.button(label="Banner", style=discord.ButtonStyle.secondary, row=1, custom_id="eo_banner")
+    async def btn_banner(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self._toggle("show_banner")
+        cd = get_countdown(self.guild_id, self.cd_id)
+        await interaction.response.edit_message(embed=_embed_options_embed(self.guild_id, cd), view=EmbedOptionsView(self.bot, self.guild_id, self.cd_id, self.build_wipe_embed))
+
+    @discord.ui.button(label="⬅️ Voltar", style=discord.ButtonStyle.secondary, row=2, custom_id="eo_back")
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=_build_countdowns_sala_embed(self.guild_id),
+            view=CountdownsPorSalaView(self.bot, self.guild_id, self.build_wipe_embed),
+        )
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not can_use_sup(str(interaction.user.id), self.guild_id):
+            await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+            return False
+        return True
+
+
+def _sanitize_channel_name(name: str) -> str:
+    """Nome de canal Discord: minúsculas, hífen, sem caracteres especiais, 2-100 chars."""
+    s = re.sub(r"[^a-z0-9\s-]", "", (name or "").lower().replace(" ", "-"))
+    s = re.sub(r"-+", "-", s).strip("-")[:100]
+    return s or "wipe"
+
+
+class AddCountdownSalaView(discord.ui.View):
+    """View para adicionar countdown por sala: categoria (criar canal) ou canal existente + servidor RCON, depois modal."""
+
+    def __init__(self, bot, guild_id: str, build_wipe_embed):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+        self.build_wipe_embed = build_wipe_embed
+        self.channel_id: int | None = None
+        self.category_id: int | None = None
+        self.rcon_index: int = 0
+        cfg = get_wipe_config(guild_id)
+        servers = cfg.get("rcon_servers") or []
+        rcon_opts = [
+            discord.SelectOption(label=s.get("name", s.get("host", "?"))[:100], value=str(i), description=f"{s.get('host', '?')}:{s.get('port', '?')}")
+            for i, s in enumerate(servers)
+        ] if servers else [discord.SelectOption(label="Nenhum servidor", value="-1")]
+        for c in self.children:
+            if getattr(c, "custom_id", None) == "add_cd_rcon":
+                c.options = rcon_opts
+                break
+
+    @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[ChannelType.category], placeholder="📁 Criar canal nesta categoria", row=0, custom_id="add_cd_cat")
+    async def category_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        ch = select.values[0] if select.values else None
+        self.category_id = ch.id if ch else None
+        await interaction.response.defer_update()
+
+    @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[ChannelType.text], placeholder="📢 Ou use um canal existente", row=0, custom_id="add_cd_ch")
+    async def channel_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
+        ch = select.values[0] if select.values else None
+        if ch:
+            self.channel_id = ch.id
+        await interaction.response.defer_update()
+
+    @discord.ui.select(placeholder="🖥️ Servidor RCON", row=1, custom_id="add_cd_rcon")
+    async def _rcon_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if select.values and select.values[0] != "-1":
+            self.rcon_index = int(select.values[0])
+        await interaction.response.defer_update()
+
+    @discord.ui.button(label="Definir data/hora e nome", style=discord.ButtonStyle.primary, row=2, custom_id="add_cd_modal")
+    async def open_modal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.category_id is None and self.channel_id is None:
+            return await interaction.response.send_message("❌ Selecione uma **categoria** (para criar canal) ou um **canal** existente.", ephemeral=True)
+        cfg = get_wipe_config(self.guild_id)
+        if self.rcon_index < 0 or self.rcon_index >= len(cfg.get("rcon_servers") or []):
+            return await interaction.response.send_message("❌ Selecione um servidor RCON.", ephemeral=True)
+        modal = WipeAddCountdownModal(self.guild_id, self.channel_id, self.category_id, self.rcon_index, use_global_wipe=False)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Usar wipe global (BR)", style=discord.ButtonStyle.secondary, row=2, custom_id="add_cd_global")
+    async def open_global_modal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.category_id is None and self.channel_id is None:
+            return await interaction.response.send_message("❌ Selecione uma **categoria** ou um **canal** existente.", ephemeral=True)
+        cfg = get_wipe_config(self.guild_id)
+        if not cfg.get("wipe_datetime_utc"):
+            return await interaction.response.send_message("❌ Defina a data/hora do wipe no menu **Wipe** (📅 Definir data/hora BR) primeiro.", ephemeral=True)
+        if self.rcon_index < 0 or self.rcon_index >= len(cfg.get("rcon_servers") or []):
+            return await interaction.response.send_message("❌ Selecione um servidor RCON.", ephemeral=True)
+        modal = WipeAddCountdownModal(self.guild_id, self.channel_id, self.category_id, self.rcon_index, use_global_wipe=True)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="⬅️ Cancelar", style=discord.ButtonStyle.secondary, row=3, custom_id="add_cd_cancel")
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=_build_countdowns_sala_embed(self.guild_id),
+            view=CountdownsPorSalaView(self.bot, self.guild_id, self.build_wipe_embed),
+        )
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not can_use_sup(str(interaction.user.id), self.guild_id):
+            await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+            return False
+        return True
+
+
+class WipeAddCountdownModal(discord.ui.Modal, title="Countdown por sala — data e nome"):
+    def __init__(self, guild_id: str, channel_id: int | None, category_id: int | None, rcon_index: int, use_global_wipe: bool = False):
+        super().__init__(timeout=120)
+        self.guild_id = guild_id
+        self.channel_id = channel_id
+        self.category_id = category_id
+        self.rcon_index = rcon_index
+        self.use_global_wipe = use_global_wipe
+        self.add_item(discord.ui.TextInput(label="Nome da sala (ex: BR 10X)", placeholder="BR 10X — usado também como nome do canal", required=True, max_length=80))
+        if not use_global_wipe:
+            self.add_item(discord.ui.TextInput(label="Data wipe (DD/MM/YYYY)", placeholder="27/02/2026", required=True, max_length=10))
+            self.add_item(discord.ui.TextInput(label="Hora wipe (HH:MM) BR", placeholder="15:00", required=True, max_length=5))
+        self.add_item(discord.ui.TextInput(label="URL do banner (opcional)", placeholder="https://...", required=False, max_length=200))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            label = (self.children[0].value or "").strip() or "Sala"
+            banner = (self.children[-1].value or "").strip() or None
+            if self.use_global_wipe:
+                cfg = get_wipe_config(self.guild_id)
+                dt_utc_str = cfg.get("wipe_datetime_utc")
+                if not dt_utc_str:
+                    return await interaction.response.send_message("❌ Wipe global não configurado. Defina no menu Wipe.", ephemeral=True)
+            else:
+                day, month, year = map(int, self.children[1].value.strip().replace("-", "/").split("/"))
+                hour, minute = map(int, self.children[2].value.strip().replace(":", " ").split())
+                dt_br = datetime(year, month, day, hour, minute, 0, tzinfo=timezone(timedelta(hours=-3)))
+                dt_utc_str = dt_br.astimezone(timezone.utc).isoformat()
+
+            channel_id_to_use = self.channel_id
+            if self.category_id and interaction.guild:
+                name_for_channel = _sanitize_channel_name(label)
+                category = interaction.guild.get_channel(int(self.category_id))
+                if category and isinstance(category, discord.CategoryChannel):
+                    new_ch = await interaction.guild.create_text_channel(name_for_channel, category=category)
+                    channel_id_to_use = new_ch.id
+                else:
+                    await interaction.response.send_message("❌ Categoria não encontrada.", ephemeral=True)
+                    return
+            if not channel_id_to_use:
+                await interaction.response.send_message("❌ Selecione um canal ou uma categoria.", ephemeral=True)
+                return
+
+            add_countdown(self.guild_id, channel_id_to_use, self.rcon_index, dt_utc_str, banner_url=banner, label=label)
+            msg = "✅ Canal criado na categoria e countdown **{0}** adicionado." if (self.category_id and interaction.guild) else "✅ Countdown **{0}** adicionado."
+            await interaction.response.send_message((msg + " Use «Countdowns por sala» para iniciar.").format(label), ephemeral=True)
+        except (ValueError, IndexError):
+            await interaction.response.send_message("❌ Data/hora inválida. Use DD/MM/YYYY e HH:MM", ephemeral=True)
 
 
 class WipeDatetimeModal(discord.ui.Modal, title="Data/hora do wipe (BR)"):
@@ -257,6 +613,13 @@ class WipeCog(commands.Cog):
         self.bot = bot
         self._countdown_tasks: dict[str, asyncio.Task] = {}
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Ao ficar pronto, restaura as tasks de countdown para guilds que já tinham countdown ativo."""
+        for guild_id in get_all_wipe_guild_ids():
+            if self._has_any_active_countdown(guild_id):
+                self._ensure_countdown_task(guild_id)
+
     def _build_wipe_embed(self, guild_id: str) -> discord.Embed:
         cfg = get_wipe_config(guild_id)
         gcfg = get_guild_config(guild_id)
@@ -355,6 +718,76 @@ class WipeCog(commands.Cog):
             self._countdown_loop(guild_id)
         )
         await interaction.followup.send("✅ Countdown iniciado.", ephemeral=True)
+
+    def _has_any_active_countdown(self, guild_id: str) -> bool:
+        """True se há countdown legado ativo ou algum countdown por sala com message_id."""
+        cfg = get_wipe_config(guild_id)
+        if cfg.get("countdown_message_id"):
+            return True
+        for cd in list_countdowns(guild_id):
+            if cd.get("message_id"):
+                return True
+        return False
+
+    def _ensure_countdown_task(self, guild_id: str) -> None:
+        """Garante que o task de countdown está rodando para a guild (se houver algum ativo)."""
+        if not self._has_any_active_countdown(guild_id):
+            return
+        if guild_id in self._countdown_tasks:
+            return
+        self._countdown_tasks[guild_id] = asyncio.create_task(self._countdown_loop(guild_id))
+
+    async def _start_countdown_for_sala(self, guild_id: str, cd_id: str, interaction: discord.Interaction):
+        """Inicia o countdown de uma sala: envia a mensagem e inicia/retoma o task."""
+        cd = get_countdown(guild_id, cd_id)
+        if not cd:
+            return await interaction.response.send_message("❌ Countdown não encontrado.", ephemeral=True)
+        if cd.get("message_id"):
+            return await interaction.response.send_message("✅ Este countdown já está ativo.", ephemeral=True)
+        cfg = get_wipe_config(guild_id)
+        rcon_servers = cfg.get("rcon_servers") or []
+        rcon_idx = cd.get("rcon_index", 0)
+        if rcon_idx < 0 or rcon_idx >= len(rcon_servers):
+            return await interaction.response.send_message("❌ Servidor RCON inválido para esta sala.", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+        guild = self.bot.get_guild(int(guild_id))
+        if not guild:
+            return await interaction.followup.send("❌ Servidor não encontrado.", ephemeral=True)
+        channel = guild.get_channel(int(cd["channel_id"]))
+        if not channel or not isinstance(channel, discord.TextChannel):
+            return await interaction.followup.send("❌ Canal não encontrado.", ephemeral=True)
+        srv = rcon_servers[rcon_idx]
+        full_info = await self._rcon_fetch_full_info(
+            srv.get("host") or "",
+            int(srv.get("port") or 28016),
+            srv.get("password") or "",
+        )
+        target_dt = None
+        if cd.get("wipe_datetime_utc"):
+            try:
+                target_dt = datetime.fromisoformat(cd["wipe_datetime_utc"].replace("Z", "+00:00"))
+                if target_dt.tzinfo is None:
+                    target_dt = target_dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+        host = srv.get("host") or ""
+        tz_name = await self._get_timezone_from_ip(host)
+        local_wipe_str = self._format_wipe_local(target_dt, tz_name) if target_dt else ""
+        embed = self._build_embed_for_countdown(guild_id, cd, full_info, target_dt, local_wipe_str=local_wipe_str or None)
+        if not embed:
+            return await interaction.followup.send("❌ Não foi possível montar a embed.", ephemeral=True)
+        msg = await channel.send(embed=embed)
+        set_countdown_message_id(guild_id, cd_id, msg.id)
+        self._ensure_countdown_task(guild_id)
+        await interaction.followup.send("✅ Countdown desta sala iniciado.", ephemeral=True)
+
+    async def _stop_countdown_for_sala(self, guild_id: str, cd_id: str, interaction: discord.Interaction):
+        """Para o countdown de uma sala (remove message_id; para o task se não houver mais nenhum)."""
+        set_countdown_message_id(guild_id, cd_id, None)
+        if not self._has_any_active_countdown(guild_id) and guild_id in self._countdown_tasks:
+            self._countdown_tasks[guild_id].cancel()
+            del self._countdown_tasks[guild_id]
+        await interaction.response.send_message("✅ Countdown desta sala parado.", ephemeral=True)
 
     def _ensure_rcon_deps(self) -> str | None:
         """Garante que websockets está instalado (RCON usa só websockets). Retorna None se OK."""
@@ -542,6 +975,36 @@ class WipeCog(commands.Cog):
         cleaned = [l for l in lines if not any(w in l.lower() for w in ignore)]
         return max(0, sum(1 for l in cleaned if re.match(r"^\d+\s+", l)))
 
+    def _parse_playerlist_entries(self, output: str) -> list[str]:
+        """Extrai lista de nomes de jogadores da saída do playerlist (um por linha, para exibir no embed)."""
+        if not output or not output.strip():
+            return []
+        lines = [l.strip() for l in output.splitlines() if l.strip()]
+        ignore = ("players", "connected", "id ", "name", "steamid", "----", "total")
+        names = []
+        for line in lines:
+            if any(w in line.lower() for w in ignore):
+                continue
+            if not re.match(r"^\d+\s+", line):
+                continue
+            tokens = line.split()
+            steam_id = None
+            for t in tokens:
+                if re.fullmatch(r"7656\d{13}", t):
+                    steam_id = t
+                    break
+            if steam_id:
+                idx = line.find(steam_id)
+                name_part = line[:idx].strip()
+                parts = name_part.split(None, 1)
+                name = parts[1] if len(parts) > 1 else parts[0] if parts else "?"
+            else:
+                parts = line.split(None, 1)
+                name = parts[1] if len(parts) > 1 else parts[0] if parts else "?"
+            if name and name != "?":
+                names.append(name[:32])
+        return names[:50]
+
     async def _rcon_fetch_info(self, host: str, port: int, password: str) -> dict:
         """Busca server hostname e player count via WebRcon (websockets, mesmo modelo do bot de referência)."""
         try:
@@ -555,6 +1018,19 @@ class WipeCog(commands.Cog):
             return result
         except Exception as e:
             raise RuntimeError(str(e)[:80]) from e
+
+    async def _rcon_fetch_full_info(self, host: str, port: int, password: str) -> dict:
+        """Busca hostname, quantidade de jogadores e lista de nomes (para embed com jogador por jogador)."""
+        try:
+            timeout = 2.5
+            out_hostname = await self._rust_rcon_command(host, port, password, "server.hostname", timeout)
+            out_players = await self._rust_rcon_command(host, port, password, "playerlist", timeout)
+            hostname = (out_hostname or "").strip()[:100] or ""
+            count = self._parse_playerlist(out_players or "")
+            names = self._parse_playerlist_entries(out_players or "")
+            return {"hostname": hostname, "players": count, "player_names": names}
+        except Exception as e:
+            return {"hostname": "", "players": 0, "player_names": [], "error": str(e)[:80]}
 
     async def _get_region_from_ip(self, host: str) -> str | None:
         """Obtém região/timezone do IP via ip-api.com (free, no key)."""
@@ -580,6 +1056,54 @@ class WipeCog(commands.Cog):
             pass
         return None
 
+    async def _get_timezone_from_ip(self, host: str) -> str | None:
+        """Obtém o nome do fuso horário (ex: America/Sao_Paulo) via ip-api.com para exibir wipe no horário local."""
+        try:
+            ip = socket.gethostbyname(host)
+        except Exception:
+            return None
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"http://ip-api.com/json/{ip}?fields=timezone,countryCode", timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        tz = (data.get("timezone") or "").strip()
+                        if tz:
+                            return tz
+                        cc = data.get("countryCode", "")
+                        if cc == "BR":
+                            return "America/Sao_Paulo"
+                        if cc in ("US", "CA"):
+                            return "America/New_York"
+                        if cc in ("DE", "FR", "GB", "NL"):
+                            return "Europe/London"
+                        return None
+        except Exception:
+            pass
+        return None
+
+    def _format_wipe_local(self, target_utc: datetime | None, tz_name: str | None) -> str:
+        """Formata a data do wipe no fuso local (ex: 25/02 15:00 (Brasília))."""
+        if not target_utc or not tz_name:
+            return ""
+        try:
+            from zoneinfo import ZoneInfo
+            local = target_utc.astimezone(ZoneInfo(tz_name))
+            labels = {
+                "America/Sao_Paulo": "Brasília (BR)",
+                "Europe/London": "Londres (EU)",
+                "Europe/Paris": "Paris (EU)",
+                "Europe/Berlin": "Berlim (EU)",
+                "America/New_York": "Nova York (US)",
+                "America/Chicago": "Chicago (US)",
+                "America/Los_Angeles": "Los Angeles (US)",
+            }
+            label = labels.get(tz_name) or tz_name.split("/")[-1].replace("_", " ")
+            return f"{local.strftime('%d/%m %H:%M')} ({label})"
+        except Exception:
+            return target_utc.strftime("%d/%m %H:%M") + " UTC"
+
     async def _stop_countdown(self, guild_id: str, interaction: discord.Interaction):
         if guild_id in self._countdown_tasks:
             self._countdown_tasks[guild_id].cancel()
@@ -589,23 +1113,52 @@ class WipeCog(commands.Cog):
         save_wipe_config(guild_id, cfg)
         await interaction.response.send_message("✅ Countdown parado.", ephemeral=True)
 
-    async def _countdown_loop(self, guild_id: str):
-        cfg = get_wipe_config(guild_id)
-        ch_id = cfg.get("countdown_channel_id")
-        msg_id = cfg.get("countdown_message_id")
-        dt_utc = cfg.get("wipe_datetime_utc")
-        if not ch_id or not msg_id or not dt_utc:
-            return
-        try:
-            target = datetime.fromisoformat(dt_utc.replace("Z", "+00:00"))
-            if target.tzinfo is None:
-                target = target.replace(tzinfo=timezone.utc)
-        except Exception:
-            return
-
+    def _build_embed_for_countdown(
+        self,
+        guild_id: str,
+        cd: dict,
+        full_info: dict,
+        target_dt: datetime | None,
+        local_wipe_str: str | None = None,
+    ) -> discord.Embed | None:
+        """Monta a embed de um countdown por sala (nome do servidor, jogadores, opções, horário local)."""
         gcfg = get_guild_config(guild_id)
         color = color_from_hex(gcfg.get("color", "#5865F2"))
-        banner = cfg.get("banner_url")
+        opts = cd.get("embed_options") or DEFAULT_EMBED_OPTIONS
+        hostname = (full_info.get("hostname") or "").strip() or "Servidor"
+        title = hostname if opts.get("show_server_name", True) else "⏱️ Countdown Wipe"
+        embed = discord.Embed(
+            title=title[:256],
+            color=color,
+            timestamp=datetime.utcnow(),
+        )
+        if opts.get("show_wipe_countdown", True) and target_dt:
+            embed.description = _format_countdown(target_dt)
+        if opts.get("show_wipe_countdown", True) and local_wipe_str:
+            embed.add_field(name="🕐 Horário local (região do servidor)", value=local_wipe_str, inline=False)
+        if opts.get("show_player_count", True):
+            count = full_info.get("players", 0)
+            embed.add_field(name="Jogadores online", value=str(count), inline=True)
+        if opts.get("show_player_list", True):
+            names = full_info.get("player_names") or []
+            if names:
+                text = "\n".join(f"• {n}" for n in names[:25])
+                if len(names) > 25:
+                    text += f"\n*+{len(names) - 25} mais*"
+                embed.add_field(name="Lista de jogadores", value=text[:1024] or "—", inline=False)
+            else:
+                embed.add_field(name="Lista de jogadores", value="Nenhum jogador online", inline=False)
+        if opts.get("show_banner", True) and cd.get("banner_url"):
+            embed.set_image(url=cd["banner_url"])
+        embed.set_footer(text="Atualiza a cada minuto")
+        return embed
+
+    async def _countdown_loop(self, guild_id: str):
+        """Atualiza countdown legado (um por guild) e todos os countdowns por sala que tiverem message_id."""
+        cfg = get_wipe_config(guild_id)
+        gcfg = get_guild_config(guild_id)
+        color = color_from_hex(gcfg.get("color", "#5865F2"))
+        rcon_servers = cfg.get("rcon_servers") or []
 
         while True:
             try:
@@ -613,26 +1166,70 @@ class WipeCog(commands.Cog):
                 guild = self.bot.get_guild(int(guild_id))
                 if not guild:
                     break
-                channel = guild.get_channel(int(ch_id))
-                if not channel:
-                    break
-                msg = await channel.fetch_message(int(msg_id))
-                embed = discord.Embed(
-                    title="⏱️ COUNTDOWN PARA O WIPE",
-                    description=_format_countdown(target),
-                    color=color,
-                    timestamp=datetime.utcnow(),
-                )
-                if banner:
-                    embed.set_image(url=banner)
-                embed.set_footer(text="Atualiza a cada minuto")
-                await msg.edit(embed=embed)
-                if target <= datetime.now(timezone.utc):
-                    break
+
+                # Countdown legado (um canal, uma mensagem)
+                ch_id = cfg.get("countdown_channel_id")
+                msg_id = cfg.get("countdown_message_id")
+                dt_utc = cfg.get("wipe_datetime_utc")
+                if ch_id and msg_id and dt_utc:
+                    try:
+                        target = datetime.fromisoformat(dt_utc.replace("Z", "+00:00"))
+                        if target.tzinfo is None:
+                            target = target.replace(tzinfo=timezone.utc)
+                        channel = guild.get_channel(int(ch_id))
+                        if channel:
+                            msg = await channel.fetch_message(int(msg_id))
+                            embed = discord.Embed(
+                                title="⏱️ COUNTDOWN PARA O WIPE",
+                                description=_format_countdown(target),
+                                color=color,
+                                timestamp=datetime.utcnow(),
+                            )
+                            if cfg.get("banner_url"):
+                                embed.set_image(url=cfg["banner_url"])
+                            embed.set_footer(text="Atualiza a cada minuto")
+                            await msg.edit(embed=embed)
+                    except Exception as e:
+                        print(f"[Wipe] Erro countdown legado {guild_id}: {e}")
+
+                # Countdowns por sala
+                for cd in list_countdowns(guild_id):
+                    if not cd.get("message_id"):
+                        continue
+                    cd_ch_id = cd.get("channel_id")
+                    rcon_idx = cd.get("rcon_index", 0)
+                    cd_dt = cd.get("wipe_datetime_utc")
+                    if not cd_ch_id or rcon_idx < 0 or rcon_idx >= len(rcon_servers):
+                        continue
+                    try:
+                        target_dt = None
+                        if cd_dt:
+                            target_dt = datetime.fromisoformat(cd_dt.replace("Z", "+00:00"))
+                            if target_dt.tzinfo is None:
+                                target_dt = target_dt.replace(tzinfo=timezone.utc)
+                    except Exception:
+                        pass
+                    srv = rcon_servers[rcon_idx]
+                    host = srv.get("host") or ""
+                    port = int(srv.get("port") or 28016)
+                    pw = srv.get("password") or ""
+                    full_info = await self._rcon_fetch_full_info(host, port, pw)
+                    tz_name = await self._get_timezone_from_ip(host)
+                    local_wipe_str = self._format_wipe_local(target_dt, tz_name) if target_dt else ""
+                    channel = guild.get_channel(int(cd_ch_id))
+                    if not channel:
+                        continue
+                    msg = await channel.fetch_message(int(cd["message_id"]))
+                    embed = self._build_embed_for_countdown(guild_id, cd, full_info, target_dt, local_wipe_str=local_wipe_str or None)
+                    if embed:
+                        await msg.edit(embed=embed)
+                # Recarregar config após possíveis alterações
+                cfg = get_wipe_config(guild_id)
+                rcon_servers = cfg.get("rcon_servers") or []
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"[Wipe] Erro countdown {guild_id}: {e}")
+                print(f"[Wipe] Erro countdown loop {guild_id}: {e}")
                 await asyncio.sleep(60)
 
 
