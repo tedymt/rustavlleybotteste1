@@ -1446,10 +1446,12 @@ class WipeCog(commands.Cog):
         try:
             timeout = 2.5
             out_hostname = await self._rust_rcon_command(host, port, password, "server.hostname", timeout)
+            # Normaliza saída, removendo prefixos como "server.hostname:" para exibir só o nome.
+            hostname_clean = self._normalize_hostname(out_hostname)
             out_players = await self._rust_rcon_command(host, port, password, "playerlist", timeout)
             game_port = await self._get_game_port_from_rcon(host, port, password)
             result = {
-                "hostname": (out_hostname or "").strip()[:100] or "",
+                "hostname": hostname_clean[:100] if hostname_clean else "",
                 "players": str(self._parse_playerlist(out_players or "")),
                 "game_port": game_port,
             }
@@ -1462,8 +1464,9 @@ class WipeCog(commands.Cog):
         try:
             timeout = 2.5
             out_hostname = await self._rust_rcon_command(host, port, password, "server.hostname", timeout)
+            hostname_clean = self._normalize_hostname(out_hostname)
             out_players = await self._rust_rcon_command(host, port, password, "playerlist", timeout)
-            hostname = (out_hostname or "").strip()[:100] or ""
+            hostname = hostname_clean[:100] if hostname_clean else ""
             count = self._parse_playerlist(out_players or "")
             names = self._parse_playerlist_entries(out_players or "")
             return {"hostname": hostname, "players": count, "player_names": names}
@@ -1542,6 +1545,29 @@ class WipeCog(commands.Cog):
         except Exception:
             return target_utc.strftime("%d/%m %H:%M") + " UTC"
 
+    def _normalize_hostname(self, raw: str | None) -> str:
+        """
+        Remove prefixos técnicos da saída de server.hostname (ex.: 'server.hostname: "Nome"')
+        para exibir apenas o nome limpo do servidor.
+        """
+        s = (raw or "").strip()
+        if not s:
+            return ""
+        lower = s.lower()
+        prefix = "server.hostname"
+        if lower.startswith(prefix):
+            sep_idx = -1
+            for ch in (":", "="):
+                idx = s.find(ch)
+                if idx != -1:
+                    sep_idx = idx
+                    break
+            if sep_idx != -1:
+                s = s[sep_idx + 1 :].lstrip()
+            else:
+                s = s[len(prefix) :].lstrip(" :=")
+        return s.strip(' "')
+
     async def _stop_countdown(self, guild_id: str, interaction: discord.Interaction):
         if guild_id in self._countdown_tasks:
             self._countdown_tasks[guild_id].cancel()
@@ -1579,13 +1605,12 @@ class WipeCog(commands.Cog):
             embed.add_field(name="Jogadores online", value=str(count), inline=True)
         if opts.get("show_player_list", True):
             names = full_info.get("player_names") or []
+            # Só mostra a lista se houver ao menos um jogador; caso contrário, não exibe o campo.
             if names:
                 text = "\n".join(f"• {n}" for n in names[:25])
                 if len(names) > 25:
                     text += f"\n*+{len(names) - 25} mais*"
                 embed.add_field(name="Lista de jogadores", value=text[:1024] or "—", inline=False)
-            else:
-                embed.add_field(name="Lista de jogadores", value="Nenhum jogador online", inline=False)
         if opts.get("show_banner", True) and cd.get("banner_url"):
             embed.set_image(url=cd["banner_url"])
         embed.set_footer(text="Atualiza a cada minuto")
