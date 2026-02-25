@@ -75,6 +75,8 @@ def get_guild_config(guild_id: str) -> dict:
         "agent_ai_enabled": True,
         "agent_ticket_channel": None,
         "bot_log_channel_id": None,
+        "bot_log_rcon_channel_id": None,
+        "bot_log_errors_channel_id": None,
         "doubt_use_ai_validation": True,
         # Tempos de ticket (para testes use valores baixos: ex. 5, 2, 1, 5 em minutos/segundos)
         "ticket_close_delay_seconds": 5,

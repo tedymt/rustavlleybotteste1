@@ -1535,6 +1535,24 @@ class TicketCog(commands.Cog):
         embed.set_footer(text="Suporte Valley • Sistema de Configuração")
         return embed
 
+    def _build_rust_servers_embed(self, guild_id: str) -> discord.Embed:
+        """Embed da tela de servidores Rust (lista para seleção no ticket)."""
+        config = get_guild_config(guild_id)
+        servers = config.get("servers", [])
+        embed = discord.Embed(
+            title="🖥️ Servidores Rust",
+            description="Lista de servidores exibida ao abrir ticket. Use **Gerenciar servidores** para adicionar, editar ou remover.",
+            color=0x5865F2,
+            timestamp=datetime.utcnow(),
+        )
+        embed.add_field(
+            name="Servidores configurados",
+            value="\n".join(f"• {s.get('name', '?')} (ID: {s.get('id', '?')})" for s in servers[:15]) or "`Nenhum`",
+            inline=False,
+        )
+        embed.set_footer(text="Suporte Valley • Rust")
+        return embed
+
     async def _show_ticket_config(self, interaction: discord.Interaction):
         """Mostra a config de tickets (categoria Ticket)."""
         embed = self._build_config_embed(str(interaction.guild.id))
@@ -1566,14 +1584,17 @@ class TicketCog(commands.Cog):
         return embed
 
     def _build_config_bot_embed(self, guild_id: str) -> discord.Embed:
-        """Constrói o embed de Config Bot."""
+        """Constrói o embed de Config Bot (permissões, cargo, canais de log por tipo)."""
         config = get_guild_config(guild_id)
         allowed = config.get("allowed_sup_users", [])
         support_role = config.get("support_role_id")
+        ch_startup = config.get("bot_log_channel_id")
+        ch_rcon = config.get("bot_log_rcon_channel_id")
+        ch_errors = config.get("bot_log_errors_channel_id")
 
         embed = discord.Embed(
             title="🤖 Config Bot",
-            description="Configurações do bot. **Apenas o dono** pode adicionar/remover usuários autorizados.",
+            description="Configurações do bot e **canais de log** (um por tipo). **Apenas o dono** pode adicionar/remover usuários.",
             color=0x5865F2,
             timestamp=datetime.utcnow(),
         )
@@ -1592,19 +1613,34 @@ class TicketCog(commands.Cog):
             value=f"<@&{support_role}>" if support_role else "`Não definido`",
             inline=True,
         )
+        embed.add_field(
+            name="📋 Log (Startup)",
+            value=f"<#{ch_startup}>" if ch_startup else "`Não definido`",
+            inline=True,
+        )
+        embed.add_field(
+            name="🖥️ Log (RCON)",
+            value=f"<#{ch_rcon}>" if ch_rcon else "`Não definido`",
+            inline=True,
+        )
+        embed.add_field(
+            name="❌ Log (Erros)",
+            value=f"<#{ch_errors}>" if ch_errors else "`Não definido`",
+            inline=True,
+        )
         maintenance = config.get("maintenance_mode", False)
         embed.add_field(
             name="🔧 Modo Manutenção",
             value="⚠️ **ATIVO** — Tickets bloqueados" if maintenance else "✅ **Inativo**",
             inline=False,
         )
-        embed.set_footer(text="Somente o dono pode alterar estas configurações")
+        embed.set_footer(text="Use os selects abaixo: escolha o tipo de log e depois o canal")
 
         return embed
 
 
 class SupMainView(discord.ui.View):
-    """Menu principal com categorias: Ticket | Config Bot."""
+    """Menu principal: Ticket | Config Bot | Rust."""
 
     def __init__(self, bot, guild_id: str):
         super().__init__(timeout=300)
@@ -1614,54 +1650,24 @@ class SupMainView(discord.ui.View):
     @discord.ui.select(
         placeholder="📂 Selecione uma categoria...",
         options=[
-            discord.SelectOption(label="Ticket", value="ticket", emoji="🎫", description="Categoria, logs, painel e aparência"),
-            discord.SelectOption(label="Config Bot", value="config_bot", emoji="🤖", description="Permissões e cargo de suporte"),
-            discord.SelectOption(label="Agente", value="agent", emoji="🤖", description="Supervisão, treino e ações"),
-            discord.SelectOption(label="Logs", value="logs", emoji="📋", description="Canal de status do bot (startup)"),
-            discord.SelectOption(label="⏱️ Tempos de ticket", value="timers", emoji="⏱️", description="Delay fechamento, alertas e auto-fechar"),
-            discord.SelectOption(label="RustServer", value="rustserver_wipe", emoji="🗓️", description="Wipe — datas, countdown e RCON"),
+            discord.SelectOption(label="Ticket", value="ticket", emoji="🎫", description="Tickets, IA/Agente e tempos"),
+            discord.SelectOption(label="Config Bot", value="config_bot", emoji="🤖", description="Permissões, cargo e logs do bot"),
+            discord.SelectOption(label="Rust", value="rust", emoji="🦀", description="Wipe, servidores e RCON"),
         ],
         row=0,
     )
     async def select_category(self, interaction: discord.Interaction, select: discord.ui.Select):
         value = select.values[0] if select.values else ""
         if value == "ticket":
-            cog = interaction.client.get_cog("TicketCog")
-            if cog:
-                embed = cog._build_config_embed(self.guild_id)
-                view = ConfigEmbedView(self.bot, self.guild_id, cog._build_config_embed)
-                await interaction.response.edit_message(embed=embed, view=view)
+            await interaction.response.edit_message(embed=_ticket_menu_embed(), view=TicketCategoryView(self.bot, self.guild_id))
         elif value == "config_bot":
             cog = interaction.client.get_cog("TicketCog")
             if cog:
                 embed = cog._build_config_bot_embed(self.guild_id)
                 view = ConfigBotView(self.bot, self.guild_id, cog._build_config_bot_embed)
                 await interaction.response.edit_message(embed=embed, view=view)
-        elif value == "agent":
-            cog = interaction.client.get_cog("AgentCog")
-            if cog:
-                from cogs.agent import AgentConfigView
-                embed = cog._build_agent_embed(self.guild_id)
-                view = AgentConfigView(self.bot, self.guild_id, cog._build_agent_embed)
-                await interaction.response.edit_message(embed=embed, view=view)
-        elif value == "logs":
-            cog = interaction.client.get_cog("TicketCog")
-            if cog:
-                embed = cog._build_logs_embed(self.guild_id)
-                view = LogsConfigView(self.bot, self.guild_id, cog._build_logs_embed)
-                await interaction.response.edit_message(embed=embed, view=view)
-        elif value == "timers":
-            modal = TicketTimersModal(self.guild_id)
-            await interaction.response.send_modal(modal)
-        elif value == "rustserver_wipe":
-            from cogs.wipe import WipeConfigView
-            cog = interaction.client.get_cog("WipeCog")
-            if cog:
-                embed = cog._build_wipe_embed(self.guild_id)
-                view = WipeConfigView(self.bot, self.guild_id, cog._build_wipe_embed)
-                await interaction.response.edit_message(embed=embed, view=view)
-            else:
-                await interaction.response.send_message("❌ Módulo de Wipe não carregado.", ephemeral=True)
+        elif value == "rust":
+            await interaction.response.edit_message(embed=_rust_menu_embed(), view=RustCategoryView(self.bot, self.guild_id))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not can_use_sup(str(interaction.user.id), self.guild_id):
@@ -1681,17 +1687,17 @@ class ConfigBotView(discord.ui.View):
         config = get_guild_config(guild_id)
         maintenance = config.get("maintenance_mode", False)
         btn_maint_on = discord.ui.Button(
-            label="🔧 Entrar em Manutenção",
+            label="🔧 Manutenção",
             style=discord.ButtonStyle.danger,
             custom_id="sv_maint_on",
-            row=3,
+            row=4,
             disabled=maintenance,
         )
         btn_maint_off = discord.ui.Button(
-            label="✅ Sair da Manutenção",
+            label="✅ Sair Manutenção",
             style=discord.ButtonStyle.success,
             custom_id="sv_maint_off",
-            row=3,
+            row=4,
             disabled=not maintenance,
         )
         btn_maint_on.callback = self._maint_on_callback
@@ -1789,7 +1795,67 @@ class ConfigBotView(discord.ui.View):
         )
         await interaction.followup.send(f"✅ Cargo de suporte: {role.mention}", ephemeral=True)
 
-    @discord.ui.button(label="Remover usuário", emoji="➖", style=discord.ButtonStyle.danger, custom_id="sv_bot_remove", row=2)
+    @discord.ui.select(
+        cls=ChannelSelect,
+        channel_types=[ChannelType.text],
+        custom_id="sv_bot_log_startup",
+        placeholder="📋 Log Startup",
+        row=2,
+    )
+    async def set_log_startup(self, interaction: discord.Interaction, select: ChannelSelect):
+        channel = select.values[0] if select.values else None
+        if not channel:
+            return
+        config = get_guild_config(self.guild_id)
+        config["bot_log_channel_id"] = str(channel.id)
+        save_guild_config(self.guild_id, config)
+        await interaction.response.edit_message(
+            embed=self.build_embed(self.guild_id),
+            view=ConfigBotView(self.bot, self.guild_id, self.build_embed),
+        )
+        await interaction.followup.send(f"✅ Log (Startup): {channel.mention}", ephemeral=True)
+
+    @discord.ui.select(
+        cls=ChannelSelect,
+        channel_types=[ChannelType.text],
+        custom_id="sv_bot_log_rcon",
+        placeholder="🖥️ Log RCON",
+        row=2,
+    )
+    async def set_log_rcon(self, interaction: discord.Interaction, select: ChannelSelect):
+        channel = select.values[0] if select.values else None
+        if not channel:
+            return
+        config = get_guild_config(self.guild_id)
+        config["bot_log_rcon_channel_id"] = str(channel.id)
+        save_guild_config(self.guild_id, config)
+        await interaction.response.edit_message(
+            embed=self.build_embed(self.guild_id),
+            view=ConfigBotView(self.bot, self.guild_id, self.build_embed),
+        )
+        await interaction.followup.send(f"✅ Log (RCON): {channel.mention}", ephemeral=True)
+
+    @discord.ui.select(
+        cls=ChannelSelect,
+        channel_types=[ChannelType.text],
+        custom_id="sv_bot_log_errors",
+        placeholder="❌ Log Erros",
+        row=3,
+    )
+    async def set_log_errors(self, interaction: discord.Interaction, select: ChannelSelect):
+        channel = select.values[0] if select.values else None
+        if not channel:
+            return
+        config = get_guild_config(self.guild_id)
+        config["bot_log_errors_channel_id"] = str(channel.id)
+        save_guild_config(self.guild_id, config)
+        await interaction.response.edit_message(
+            embed=self.build_embed(self.guild_id),
+            view=ConfigBotView(self.bot, self.guild_id, self.build_embed),
+        )
+        await interaction.followup.send(f"✅ Log (Erros): {channel.mention}", ephemeral=True)
+
+    @discord.ui.button(label="Remover usuário", emoji="➖", style=discord.ButtonStyle.danger, custom_id="sv_bot_remove", row=4)
     async def remove_user_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not is_bot_owner(str(interaction.user.id)):
             return await interaction.response.send_message("❌ Apenas o **dono do bot** pode remover usuários.", ephemeral=True)
@@ -1801,7 +1867,7 @@ class ConfigBotView(discord.ui.View):
         modal = RemoveUserModal(self.guild_id, allowed)
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Voltar", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="sv_bot_back", row=2)
+    @discord.ui.button(label="Voltar", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="sv_bot_back", row=4)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = SupMainView(self.bot, self.guild_id)
         await interaction.response.edit_message(embed=_main_embed(), view=view)
@@ -1821,12 +1887,216 @@ def _main_embed() -> discord.Embed:
         color=0x5865F2,
         timestamp=datetime.utcnow(),
     )
-    embed.add_field(name="🎫 Ticket", value="Categoria, logs, painel e aparência", inline=True)
-    embed.add_field(name="🤖 Config Bot", value="Permissões e cargo de suporte", inline=True)
-    embed.add_field(name="🤖 Agente", value="Supervisão, treino e ações", inline=True)
-    embed.add_field(name="📋 Logs", value="Canal de status do bot (startup)", inline=True)
+    embed.add_field(name="🎫 Ticket", value="Tickets, IA/Agente e tempos", inline=True)
+    embed.add_field(name="🤖 Config Bot", value="Permissões, cargo, logs do bot", inline=True)
+    embed.add_field(name="🦀 Rust", value="Wipe, countdown, servidores e RCON", inline=True)
     embed.set_footer(text="Use o menu abaixo")
     return embed
+
+
+def _ticket_menu_embed() -> discord.Embed:
+    """Embed do submenu Ticket (tickets + IA + tempos)."""
+    embed = discord.Embed(
+        title="🎫 Ticket",
+        description="Configuração de **tickets**, **Agente (IA)** e **tempos**.",
+        color=0x5865F2,
+        timestamp=datetime.utcnow(),
+    )
+    embed.add_field(name="⚙️ Configuração", value="Categoria, logs, painel e aparência", inline=True)
+    embed.add_field(name="🤖 Agente (IA)", value="Supervisão, treino e respostas", inline=True)
+    embed.add_field(name="⏱️ Tempos", value="Delay fechamento, alertas, auto-fechar", inline=True)
+    embed.set_footer(text="Selecione uma opção abaixo")
+    return embed
+
+
+def _rust_menu_embed() -> discord.Embed:
+    """Embed do submenu Rust (wipe + servidores)."""
+    embed = discord.Embed(
+        title="🦀 Rust",
+        description="Configuração de **wipe**, **countdown**, **servidores** e **RCON**.",
+        color=0x5865F2,
+        timestamp=datetime.utcnow(),
+    )
+    embed.add_field(name="🗓️ Wipe", value="Data/hora, countdown e RCON", inline=True)
+    embed.add_field(name="🖥️ Servidores", value="Lista de servidores para seleção no ticket", inline=True)
+    embed.set_footer(text="Selecione uma opção abaixo")
+    return embed
+
+
+class TicketCategoryView(discord.ui.View):
+    """Submenu da categoria Ticket: Config de tickets | Agente (IA) | Tempos."""
+
+    def __init__(self, bot, guild_id: str):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+
+    @discord.ui.select(
+        placeholder="📂 Ticket — Selecione...",
+        options=[
+            discord.SelectOption(label="Configuração de Tickets", value="ticket_config", emoji="⚙️", description="Categoria, logs, painel e aparência"),
+            discord.SelectOption(label="Agente (IA)", value="agent", emoji="🤖", description="Supervisão, treino e respostas"),
+            discord.SelectOption(label="Tempos de ticket", value="timers", emoji="⏱️", description="Delay fechamento, alertas e auto-fechar"),
+        ],
+        row=0,
+    )
+    async def select_sub(self, interaction: discord.Interaction, select: discord.ui.Select):
+        value = select.values[0] if select.values else ""
+        if value == "ticket_config":
+            cog = interaction.client.get_cog("TicketCog")
+            if cog:
+                embed = cog._build_config_embed(self.guild_id)
+                view = ConfigEmbedView(self.bot, self.guild_id, cog._build_config_embed)
+                await interaction.response.edit_message(embed=embed, view=view)
+        elif value == "agent":
+            cog = interaction.client.get_cog("AgentCog")
+            if cog:
+                from cogs.agent import AgentConfigView
+                embed = cog._build_agent_embed(self.guild_id)
+                view = AgentConfigView(self.bot, self.guild_id, cog._build_agent_embed)
+                await interaction.response.edit_message(embed=embed, view=view)
+        elif value == "timers":
+            modal = TicketTimersModal(self.guild_id)
+            await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Voltar", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="ticket_cat_back", row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_main_embed(), view=SupMainView(self.bot, self.guild_id))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not can_use_sup(str(interaction.user.id), self.guild_id):
+            await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+            return False
+        return True
+
+
+class RustCategoryView(discord.ui.View):
+    """Submenu da categoria Rust: Wipe | Servidores."""
+
+    def __init__(self, bot, guild_id: str):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+
+    @discord.ui.select(
+        placeholder="📂 Rust — Selecione...",
+        options=[
+            discord.SelectOption(label="Wipe", value="wipe", emoji="🗓️", description="Data/hora, countdown e RCON"),
+            discord.SelectOption(label="Servidores", value="servidores", emoji="🖥️", description="Lista para seleção no ticket"),
+        ],
+        row=0,
+    )
+    async def select_sub(self, interaction: discord.Interaction, select: discord.ui.Select):
+        value = select.values[0] if select.values else ""
+        if value == "wipe":
+            cog = interaction.client.get_cog("WipeCog")
+            if cog:
+                from cogs.wipe import WipeConfigView
+                embed = cog._build_wipe_embed(self.guild_id)
+                view = WipeConfigView(self.bot, self.guild_id, cog._build_wipe_embed)
+                await interaction.response.edit_message(embed=embed, view=view)
+            else:
+                await interaction.response.send_message("❌ Módulo de Wipe não carregado.", ephemeral=True)
+        elif value == "servidores":
+            cog = interaction.client.get_cog("TicketCog")
+            if cog:
+                embed = cog._build_rust_servers_embed(self.guild_id)
+                view = RustServersView(self.bot, self.guild_id)
+                await interaction.response.edit_message(embed=embed, view=view)
+
+    @discord.ui.button(label="Voltar", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="rust_cat_back", row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_main_embed(), view=SupMainView(self.bot, self.guild_id))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not can_use_sup(str(interaction.user.id), self.guild_id):
+            await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+            return False
+        return True
+
+
+class RustServersView(discord.ui.View):
+    """Gerenciar lista de servidores Rust (seleção no ticket)."""
+
+    def __init__(self, bot, guild_id: str):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+
+    @discord.ui.button(label="Gerenciar servidores", style=discord.ButtonStyle.primary, emoji="🖥️", custom_id="rust_servers_manage", row=0)
+    async def manage_servers(self, interaction: discord.Interaction, button: discord.ui.Button):
+        config = get_guild_config(self.guild_id)
+        servers = config.get("servers", [])
+
+        view = discord.ui.View(timeout=120)
+
+        async def _add(i: discord.Interaction):
+            modal = AddServerModal(self.guild_id)
+            await i.response.send_modal(modal)
+
+        async def _edit(i: discord.Interaction):
+            if not servers:
+                return await i.response.send_message("❌ Nenhum servidor configurado para editar.", ephemeral=True)
+            sel_view = discord.ui.View(timeout=60)
+            options = [
+                discord.SelectOption(label=s.get("name", f"ID {s.get('id')}"), value=str(s.get("id")))
+                for s in servers[:25]
+            ]
+            sel = discord.ui.Select(placeholder="Selecione o servidor para editar", options=options)
+
+            async def _on_select_edit(sel_inter: discord.Interaction):
+                sid = sel.values[0]
+                modal = EditServerModal(self.guild_id, sid)
+                await sel_inter.response.send_modal(modal)
+
+            sel.callback = _on_select_edit
+            sel_view.add_item(sel)
+            await i.response.send_message("Selecione o servidor que deseja **editar**:", view=sel_view, ephemeral=True)
+
+        async def _remove(i: discord.Interaction):
+            if not servers:
+                return await i.response.send_message("❌ Nenhum servidor configurado para remover.", ephemeral=True)
+            sel_view = discord.ui.View(timeout=60)
+            options = [
+                discord.SelectOption(label=s.get("name", f"ID {s.get('id')}"), value=str(s.get("id")))
+                for s in servers[:25]
+            ]
+            sel = discord.ui.Select(placeholder="Selecione o servidor para remover", options=options)
+
+            async def _on_select_remove(sel_inter: discord.Interaction):
+                sid = sel.values[0]
+                cfg = get_guild_config(self.guild_id)
+                current = cfg.get("servers", [])
+                new_list = [s for s in current if str(s.get("id")) != str(sid)]
+                cfg["servers"] = new_list
+                save_guild_config(self.guild_id, cfg)
+                await sel_inter.response.send_message("✅ Servidor removido da lista.", ephemeral=True)
+
+            sel.callback = _on_select_remove
+            sel_view.add_item(sel)
+            await i.response.send_message("Selecione o servidor que deseja **remover**:", view=sel_view, ephemeral=True)
+
+        btn_add = discord.ui.Button(label="Adicionar", style=discord.ButtonStyle.primary, emoji="➕")
+        btn_edit = discord.ui.Button(label="Editar", style=discord.ButtonStyle.secondary, emoji="✏️")
+        btn_remove = discord.ui.Button(label="Remover", style=discord.ButtonStyle.danger, emoji="🗑️")
+        btn_add.callback = _add
+        btn_edit.callback = _edit
+        btn_remove.callback = _remove
+        view.add_item(btn_add)
+        view.add_item(btn_edit)
+        view.add_item(btn_remove)
+
+        await interaction.response.send_message("Escolha uma ação para **servidores Rust** (lista no ticket):", view=view, ephemeral=True)
+
+    @discord.ui.button(label="Voltar", emoji="⬅️", style=discord.ButtonStyle.secondary, custom_id="rust_servers_back", row=1)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_rust_menu_embed(), view=RustCategoryView(self.bot, self.guild_id))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not can_use_sup(str(interaction.user.id), self.guild_id):
+            await interaction.response.send_message("❌ Sem permissão.", ephemeral=True)
+            return False
+        return True
 
 
 class LogsConfigView(discord.ui.View):
@@ -2452,78 +2722,6 @@ class ConfigEmbedView(discord.ui.View):
         )
         await interaction.followup.send(f"✅ Canal de transcripts: {channel.mention}", ephemeral=True)
 
-    @discord.ui.button(label="Adicionar Servidor", style=discord.ButtonStyle.secondary, emoji="🖥️", custom_id="sv_config_add_server", row=4)
-    async def add_server(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Menu efêmero: adicionar, editar ou remover servidor configurado."""
-        config = get_guild_config(self.guild_id)
-        servers = config.get("servers", [])
-
-        view = discord.ui.View(timeout=120)
-
-        async def _add(i: discord.Interaction):
-            modal = AddServerModal(self.guild_id)
-            await i.response.send_modal(modal)
-
-        async def _edit(i: discord.Interaction):
-            if not servers:
-                return await i.response.send_message("❌ Nenhum servidor configurado para editar.", ephemeral=True)
-            sel_view = discord.ui.View(timeout=60)
-            options = [
-                discord.SelectOption(label=s.get("name", f"ID {s.get('id')}"), value=str(s.get("id")))
-                for s in servers[:25]
-            ]
-            select = discord.ui.Select(placeholder="Selecione o servidor para editar", options=options)
-
-            async def _on_select_edit(sel_inter: discord.Interaction):
-                sid = select.values[0]
-                modal = EditServerModal(self.guild_id, sid)
-                await sel_inter.response.send_modal(modal)
-
-            select.callback = _on_select_edit
-            sel_view.add_item(select)
-            await i.response.send_message("Selecione o servidor que deseja **editar**:", view=sel_view, ephemeral=True)
-
-        async def _remove(i: discord.Interaction):
-            if not servers:
-                return await i.response.send_message("❌ Nenhum servidor configurado para remover.", ephemeral=True)
-            sel_view = discord.ui.View(timeout=60)
-            options = [
-                discord.SelectOption(label=s.get("name", f"ID {s.get('id')}"), value=str(s.get("id")))
-                for s in servers[:25]
-            ]
-            select = discord.ui.Select(placeholder="Selecione o servidor para remover", options=options)
-
-            async def _on_select_remove(sel_inter: discord.Interaction):
-                sid = select.values[0]
-                cfg = get_guild_config(self.guild_id)
-                current = cfg.get("servers", [])
-                new_list = [s for s in current if str(s.get("id")) != str(sid)]
-                cfg["servers"] = new_list
-                save_guild_config(self.guild_id, cfg)
-                await sel_inter.response.send_message("✅ Servidor removido da configuração de tickets.", ephemeral=True)
-
-            select.callback = _on_select_remove
-            sel_view.add_item(select)
-            await i.response.send_message("Selecione o servidor que deseja **remover**:", view=sel_view, ephemeral=True)
-
-        btn_add = discord.ui.Button(label="Adicionar", style=discord.ButtonStyle.primary, emoji="➕")
-        btn_edit = discord.ui.Button(label="Editar", style=discord.ButtonStyle.secondary, emoji="✏️")
-        btn_remove = discord.ui.Button(label="Remover", style=discord.ButtonStyle.danger, emoji="🗑️")
-
-        async def _btn_add_cb(i: discord.Interaction): await _add(i)
-        async def _btn_edit_cb(i: discord.Interaction): await _edit(i)
-        async def _btn_remove_cb(i: discord.Interaction): await _remove(i)
-
-        btn_add.callback = _btn_add_cb
-        btn_edit.callback = _btn_edit_cb
-        btn_remove.callback = _btn_remove_cb
-
-        view.add_item(btn_add)
-        view.add_item(btn_edit)
-        view.add_item(btn_remove)
-
-        await interaction.response.send_message("Escolha uma ação para **servidores de tickets**:", view=view, ephemeral=True)
-
     @discord.ui.button(label="Editar Painel", style=discord.ButtonStyle.secondary, emoji="📺", custom_id="sv_config_edit_panel", row=4)
     async def edit_panel_embed(self, interaction: discord.Interaction, button: discord.ui.Button):
         # View efêmera só para quem clicou, com botões separados para texto/cor e banner
@@ -2587,8 +2785,7 @@ class ConfigEmbedView(discord.ui.View):
 
     @discord.ui.button(label="Voltar", style=discord.ButtonStyle.secondary, emoji="⬅️", custom_id="sv_config_back", row=4)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        view = SupMainView(self.bot, self.guild_id)
-        await interaction.response.edit_message(embed=_main_embed(), view=view)
+        await interaction.response.edit_message(embed=_ticket_menu_embed(), view=TicketCategoryView(self.bot, self.guild_id))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not can_use_sup(str(interaction.user.id), self.guild_id):

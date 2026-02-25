@@ -4,8 +4,10 @@ Desenvolvido em Python | Armazenamento 100% JSON | Tradução automática PT/EN
 """
 __version__ = "1.0.1"
 
-import sys
+import asyncio
 import os
+import socket
+import sys
 
 # Garante que o diretório do projeto esteja no path (fallback quando rodar main.py diretamente)
 _project_root = os.path.dirname(os.path.abspath(__file__))
@@ -24,6 +26,7 @@ from utils.key_expiry import (
     get_expiry_warning_message,
 )
 from utils.storage import get_guild_config
+from utils.bot_logs import get_log_channel_id, send_log_embed
 
 
 def main():
@@ -97,10 +100,19 @@ def main():
                 except Exception:
                     pass
 
+        # Onde o bot está rodando (host/ambiente)
+        try:
+            _host = os.environ.get("HOSTNAME") or os.environ.get("COMPUTERNAME") or os.environ.get("DISCLOUD_APP_NAME")
+            if not _host:
+                _host = socket.gethostname()
+        except Exception:
+            _host = "N/A"
+        _where_started = f"{_host} | {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M:%S')} UTC"
+
         # Envia status de startup para o canal de log de cada servidor
         for guild in bot.guilds:
             config = get_guild_config(str(guild.id))
-            ch_id = config.get("bot_log_channel_id")
+            ch_id = get_log_channel_id(str(guild.id), "startup") or config.get("bot_log_channel_id")
             if not ch_id:
                 continue
             channel = guild.get_channel(int(ch_id))
@@ -111,7 +123,8 @@ def main():
                 status_lines = [
                     f"**Bot:** {bot.user} conectado",
                     f"**Cogs:** Tickets {'✅' if 'TicketCog' in str(bot.cogs) else '❌'}, Agent {'✅' if 'AgentCog' in str(bot.cogs) else '❌'}, Wipe {'✅' if 'WipeCog' in str(bot.cogs) else '❌'}",
-                    f"**Servidores:** {len(bot.guilds)}",
+                    f"**Servidores (guilds):** {len(bot.guilds)}",
+                    f"**📍 Onde:** `{_where_started}`",
                 ]
                 config_lines = [
                     f"**Agente:** {'✅ Ativo' if cfg.get('agent_enabled') else '❌ Inativo'}",
@@ -134,17 +147,33 @@ def main():
             except discord.Forbidden:
                 pass
             except Exception as e:
+                err_embed = discord.Embed(
+                    title="❌ Erro ao enviar log de startup",
+                    description=str(e)[:500],
+                    color=0xE74C3C,
+                    timestamp=datetime.now(timezone.utc),
+                )
+                err_embed.set_footer(text="Desenvolvido por tedyziim")
                 try:
-                    err_embed = discord.Embed(
-                        title="❌ Erro ao enviar log de startup",
-                        description=str(e)[:500],
-                        color=0xE74C3C,
-                        timestamp=datetime.now(timezone.utc),
-                    )
-                    err_embed.set_footer(text="Desenvolvido por tedyziim")
                     await channel.send(embed=err_embed)
                 except Exception:
                     pass
+                await send_log_embed(bot, str(guild.id), "errors", err_embed, fallback_startup=True)
+
+        # Log de status RCON (em background) para guilds que têm RCON e canal de log RCON
+        async def _rcon_log_task():
+            await asyncio.sleep(8)
+            wipe_cog = bot.get_cog("WipeCog")
+            if not wipe_cog or not hasattr(wipe_cog, "_send_rcon_status_log"):
+                return
+            for guild in bot.guilds:
+                try:
+                    await wipe_cog._send_rcon_status_log(str(guild.id))
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+
+        asyncio.create_task(_rcon_log_task())
 
         # Status / atividade do bot com site + crédito
         try:

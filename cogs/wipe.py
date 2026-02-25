@@ -13,6 +13,7 @@ from discord.enums import ChannelType
 from config import BOT_OWNER_ID
 from utils.storage import get_guild_config, save_guild_config
 from utils.wipe_storage import get_wipe_config, save_wipe_config
+from utils.bot_logs import get_log_channel_id
 from utils.translator import t
 
 
@@ -131,8 +132,8 @@ class WipeConfigView(discord.ui.View):
 
     @discord.ui.button(label="⬅️ Voltar", style=discord.ButtonStyle.secondary, row=4, custom_id="wipe_back")
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        from cogs.tickets import SupMainView, _main_embed
-        await interaction.response.edit_message(embed=_main_embed(), view=SupMainView(self.bot, self.guild_id))
+        from cogs.tickets import RustCategoryView, _rust_menu_embed
+        await interaction.response.edit_message(embed=_rust_menu_embed(), view=RustCategoryView(self.bot, self.guild_id))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not can_use_sup(str(interaction.user.id), self.guild_id):
@@ -213,7 +214,13 @@ class WipeRconModal(discord.ui.Modal, title="Adicionar servidor RCON"):
             cfg["rcon_servers"] = servers[-20:]
             cfg["rcon_draft"] = {"host": host, "port": str(port), "password": password, "name": name}
             save_wipe_config(self.guild_id, cfg)
-            await interaction.response.send_message(f"✅ Servidor **{name}** adicionado. Use o botão 'Buscar info RCON' para identificar.", ephemeral=True)
+            await interaction.response.send_message(
+                f"✅ Servidor **{name}** adicionado. Verificando conexão e enviando log no canal de RCON...",
+                ephemeral=True,
+            )
+            cog = interaction.client.get_cog("WipeCog")
+            if cog and isinstance(cog, WipeCog):
+                asyncio.create_task(cog._check_and_log_new_rcon_server(self.guild_id, host, port, password, name))
         except ValueError:
             await interaction.response.send_message("❌ Porta inválida.", ephemeral=True)
 
@@ -376,8 +383,110 @@ class WipeCog(commands.Cog):
             save_wipe_config(guild_id, cfg)
             msg = "\n".join(lines) if lines else "Nenhum servidor respondendo."
             await interaction.followup.send(f"🔍 **Info RCON:**\n{msg}", ephemeral=True)
+            if lines:
+                await self._send_rcon_log_embed(
+                    guild_id,
+                    "🔍 Verificação RCON — Configuração",
+                    "Resultado da verificação ao usar «Buscar info RCON». Nome do servidor e jogadores online.",
+                    lines,
+                    color=0x5865F2,
+                )
         except ImportError:
             await interaction.followup.send("❌ Instale `webrcon` e `aiohttp` para usar RCON.", ephemeral=True)
+
+    def _get_rcon_log_channel(self, guild_id: str):
+        """Retorna o canal de log RCON (ou startup) da guild, ou None."""
+        ch_id = get_log_channel_id(guild_id, "rcon") or get_guild_config(guild_id).get("bot_log_channel_id")
+        if not ch_id:
+            return None
+        guild = self.bot.get_guild(int(guild_id))
+        if not guild:
+            return None
+        channel = guild.get_channel(int(ch_id))
+        if not channel or not isinstance(channel, discord.TextChannel):
+            return None
+        return channel
+
+    async def _send_rcon_log_embed(self, guild_id: str, title: str, description: str, lines: list, color: int = 0x2ECC71) -> bool:
+        """Envia um embed de log RCON para o canal configurado. Retorna True se enviou."""
+        channel = self._get_rcon_log_channel(guild_id)
+        if not channel:
+            return False
+        text = "\n".join(lines)[:1024] if lines else "—"
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="Servidores", value=text, inline=False)
+        embed.set_footer(text="Suporte Valley • RCON")
+        try:
+            await channel.send(embed=embed)
+            return True
+        except (discord.Forbidden, Exception):
+            return False
+
+    async def _check_and_log_new_rcon_server(self, guild_id: str, host: str, port: int, password: str, name: str) -> None:
+        """Verifica um servidor RCON recém-adicionado e envia log (nome + jogadores) para confirmar configuração."""
+        try:
+            info = await self._rcon_fetch_info(host, port, password)
+            region = await self._get_region_from_ip(host)
+            hostname = (info.get("hostname") or "").strip() or "(nome não obtido)"
+            players = info.get("players", "?")
+            line = f"**{name}** — Nome no servidor: `{hostname[:50]}` | **{players}** jogador(es) online"
+            if region:
+                line += f" | 🌍 {region}"
+            await self._send_rcon_log_embed(
+                guild_id,
+                "✅ RCON configurado",
+                "Servidor adicionado e conexão verificada com sucesso.",
+                [line],
+                color=0x2ECC71,
+            )
+        except Exception as e:
+            await self._send_rcon_log_embed(
+                guild_id,
+                "⚠️ RCON adicionado — falha na conexão",
+                "O servidor foi salvo, mas a verificação da conexão falhou. Confira host, porta e senha.",
+                [f"**{name}** (`{host}:{port}`) — ❌ {str(e)[:80]}"],
+                color=0xE67E22,
+            )
+
+    async def _send_rcon_status_log(self, guild_id: str) -> None:
+        """Envia log de status RCON para o canal configurado (startup ou rcon). Chamado ao iniciar o bot."""
+        cfg = get_wipe_config(guild_id)
+        servers = cfg.get("rcon_servers", [])
+        if not servers:
+            return
+        lines = []
+        try:
+            for s in servers:
+                host = s.get("host", "")
+                port = s.get("port", 28016)
+                pwd = s.get("password", "")
+                name = s.get("name", host)
+                try:
+                    info = await self._rcon_fetch_info(host, port, pwd)
+                    region = await self._get_region_from_ip(host)
+                    hostname = (info.get("hostname") or "").strip() or "(não obtido)"
+                    line = f"**{name}** — `{hostname[:40]}` | {info.get('players', '?')} online"
+                    if region:
+                        line += f" | 🌍 {region}"
+                    lines.append(line)
+                except Exception as e:
+                    lines.append(f"**{name}** — ❌ Erro: {str(e)[:50]}")
+        except Exception as e:
+            lines.append(f"Erro geral: {str(e)[:200]}")
+        if not lines:
+            return
+        await self._send_rcon_log_embed(
+            guild_id,
+            "🖥️ Status RCON — Startup",
+            "Verificação dos servidores RCON ao iniciar o bot.",
+            lines,
+            color=0x2ECC71,
+        )
 
     async def _rcon_fetch_info(self, host: str, port: int, password: str) -> dict:
         """Busca server hostname e player count via webrcon."""
