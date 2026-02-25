@@ -50,13 +50,9 @@ def get_wipe_config(guild_id: str) -> dict:
         "rcon_servers": [],
         "rcon_draft": {},
         "countdowns": [],
-        # Anúncio de wipe no chat (!wipe): config em !sup → Rust → Wipe; envio por idioma em !wipe
-        "wipe_announce_channel_pt": None,
-        "wipe_announce_channel_us": None,
-        "wipe_announce_map_link": None,
-        "wipe_announce_store_url": None,
-        "wipe_announce_aviso": None,
-        "wipe_announce_rcon_index": 0,
+        # Anúncio de wipe: config separada por idioma (PT-BR e US)
+        "wipe_announce_pt": None,  # { channel_id, map_link, store_url, aviso, rcon_index }
+        "wipe_announce_us": None,
     }
     if guild_id not in data:
         data[guild_id] = defaults.copy()
@@ -66,6 +62,35 @@ def get_wipe_config(guild_id: str) -> dict:
         if k not in cfg:
             cfg[k] = v
             _save(data)
+    # Migrar config antiga de anúncio para wipe_announce_pt / wipe_announce_us
+    if cfg.get("wipe_announce_pt") is None and (cfg.get("wipe_announce_channel_pt") or cfg.get("wipe_announce_channel_id")):
+        cfg["wipe_announce_pt"] = {
+            "channel_id": cfg.get("wipe_announce_channel_pt") or cfg.get("wipe_announce_channel_id"),
+            "map_link": cfg.get("wipe_announce_map_link"),
+            "store_url": cfg.get("wipe_announce_store_url"),
+            "aviso": cfg.get("wipe_announce_aviso"),
+            "rcon_index": cfg.get("wipe_announce_rcon_index", 0),
+        }
+        _save(data)
+    if cfg.get("wipe_announce_us") is None and cfg.get("wipe_announce_channel_us"):
+        cfg["wipe_announce_us"] = {
+            "channel_id": cfg.get("wipe_announce_channel_us"),
+            "map_link": cfg.get("wipe_announce_map_link"),
+            "store_url": cfg.get("wipe_announce_store_url"),
+            "aviso": cfg.get("wipe_announce_aviso"),
+            "rcon_index": cfg.get("wipe_announce_rcon_index", 0),
+        }
+        _save(data)
+    # Garantir que são dicts
+    for key in ("wipe_announce_pt", "wipe_announce_us"):
+        if cfg.get(key) is None:
+            cfg[key] = {"channel_id": None, "map_link": None, "store_url": None, "aviso": None, "rcon_index": 0}
+        elif isinstance(cfg[key], dict):
+            for f in ("channel_id", "map_link", "store_url", "aviso", "rcon_index"):
+                if f not in cfg[key]:
+                    cfg[key][f] = None if f != "rcon_index" else 0
+            if cfg[key].get("rcon_index") is None:
+                cfg[key]["rcon_index"] = 0
     return cfg
 
 
