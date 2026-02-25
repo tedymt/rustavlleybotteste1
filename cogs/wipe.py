@@ -413,24 +413,36 @@ class AddCountdownSalaView(discord.ui.View):
                 c.options = rcon_opts
                 break
 
+    async def _defer_update(self, interaction: discord.Interaction) -> None:
+        """Responde à interação (defer update ou fallback para versões/forks do discord.py)."""
+        try:
+            if hasattr(interaction.response, "defer_update"):
+                await interaction.response.defer_update()
+            elif hasattr(interaction, "defer_update"):
+                await interaction.defer_update()
+            else:
+                await interaction.response.send_message("✅", ephemeral=True)
+        except (AttributeError, TypeError):
+            await interaction.response.send_message("✅", ephemeral=True)
+
     @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[ChannelType.category], placeholder="📁 Criar canal nesta categoria", row=0, custom_id="add_cd_cat")
     async def category_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
         ch = select.values[0] if select.values else None
         self.category_id = ch.id if ch else None
-        await interaction.response.defer_update()
+        await self._defer_update(interaction)
 
     @discord.ui.select(cls=discord.ui.ChannelSelect, channel_types=[ChannelType.text], placeholder="📢 Ou use um canal existente", row=1, custom_id="add_cd_ch")
     async def channel_select(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect):
         ch = select.values[0] if select.values else None
         if ch:
             self.channel_id = ch.id
-        await interaction.response.defer_update()
+        await self._defer_update(interaction)
 
     @discord.ui.select(placeholder="🖥️ Servidor RCON", row=2, custom_id="add_cd_rcon")
     async def _rcon_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         if select.values and select.values[0] != "-1":
             self.rcon_index = int(select.values[0])
-        await interaction.response.defer_update()
+        await self._defer_update(interaction)
 
     @discord.ui.button(label="Definir data/hora e nome", style=discord.ButtonStyle.primary, row=3, custom_id="add_cd_modal")
     async def open_modal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
